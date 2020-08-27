@@ -69,7 +69,25 @@ class sym_wann():
 				else:
 					self.spin=False 
 		self.lattice = np.array([line.split() for line in win[lattice_op:lattice_ed]],dtype=float)
-		projectiondic={} 
+		orbital_dic = {"s":1,"p":3,"d":5,"f":7,"sp3":4,"sp2":3,"l=0":1,"l=1":3,"l=2":5,"l=3":7}	
+		projectiondic={}
+		self.atom_info = []
+		self.symbols_in=[]
+		self.positions_in=[]
+
+		for natom in range(atom_op,atom_ed):
+			atom_name = win[natom].split()[0]
+			position = np.array(win[natom].split()[1:],dtype=float)
+			self.symbols_in.append(atom_name)
+			self.positions_in.append(list( np.round(np.dot(position,np.linalg.inv(self.lattice)),decimals=6) ))			
+		self.num_atom = len(self.symbols_in)
+	
+		orbital_index_list=[]
+		for atom in range(self.num_atom):
+			orbital_index_list.append([])	
+		orbital_index=0
+		if self.spin: orb_spin = 2
+		else: orb_spin = 1
 		for npro in range(pro_op,pro_ed):
 			name = win[npro].split(":")[0].split()[0]
 			orb = win[npro].split(":")[1].split()
@@ -78,19 +96,24 @@ class sym_wann():
 			else:
 				newdic={name:orb}
 				projectiondic.update(newdic)
-			
-		self.atom_info = []
-		self.symbols_in=[]
-		self.positions_in=[]
-		for natom in range(atom_op,atom_ed):
-			atom_name = win[natom].split()[0]
-			position = np.array(win[natom].split()[1:],dtype=float)
-			projection = projectiondic[atom_name]
-			self.atom_info.append((natom - atom_op +1,atom_name,position,projection))
-			self.symbols_in.append(atom_name)
-			self.positions_in.append(list( np.round(np.dot(position,np.linalg.inv(self.lattice)),decimals=6) ))			
-
+			for atom in range(self.num_atom):
+				if self.symbols_in[atom] == name:
+					num_orb = orb_spin * sum([orbital_dic[orb_name] for orb_name in orb])
+					orbital_index_old = orbital_index
+					orbital_index+=num_orb
+					orbital_index_list[atom] += [ i for i in range(orbital_index_old,orbital_index)]
+		
+		for atom in range(self.num_atom):
+			name = self.symbols_in[atom]
+			if name in projectiondic.keys():
+				projection=projectiondic[name]
+			else:
+				projection=[]
+			self.atom_info.append((atom+1,self.symbols_in[atom],self.positions_in[atom],projection,orbital_index_list[atom]))
 		print(self.atom_info)
+		
+	def get_index(lst=None,item=''):
+		return [index for (index,value) in enumerate(lst) if value == item]
 	
 	def findsym(self):
 		def show_symmetry(symmetry):
@@ -98,28 +121,50 @@ class sym_wann():
 				print("  --------------- %4d ---------------" % (i + 1))
 				rot = symmetry['rotations'][i]
 				trans = symmetry['translations'][i]
+				print("  fold: {}".format(self.rot_fold[i]))
 				print("  rotation:")
 				for x in rot:
 					print("     [%2d %2d %2d]" % (x[0], x[1], x[2]))
 				print("  translation:")
 				print("     (%8.5f %8.5f %8.5f)" % (trans[0], trans[1], trans[2]))
 
-		def show_lattice(lattice):
-			print("Basis vectors:")
-			for vec, axis in zip(lattice, ("a", "b", "c")):
-				print("%s %10.5f %10.5f %10.5f" % (tuple(axis,) + tuple(vec)))
-
-		def show_cell(lattice, positions, numbers):
-			show_lattice(lattice)
-			print("Atomic points:")
-			for p, s in zip(positions, numbers):
-				print("%2d %10.5f %10.5f %10.5f" % ((s,) + tuple(p)))
 		atom_in=Atoms(symbols=self.symbols_in,cell=list(self.lattice),scaled_positions=self.positions_in,pbc=True)
 		print("[get_spacegroup]")
 		print("  Spacegroup of "+self.seedname+" is %s." %spglib.get_spacegroup(atom_in))
 		self.symmetry = spglib.get_symmetry(atom_in)
+		self.nsymm = self.symmetry['rotations'].shape[0]
+		self.rot_fold=[]
+		for rot in range(self.nsymm):
+			position=np.array(self.positions_in)
+			trans = self.symmetry['translations'][rot]
+			if abs(trans[0]*trans[1]*trans[2]) < 1E-15:
+				for i in range(6):
+					atom_list=[]
+					for atom in range(self.num_atom):
+						new_atom =np.round( np.dot(self.symmetry['rotations'][rot],position[atom]),decimals=6)
+						atom_list.append(new_atom)
+					position=np.array(atom_list)
+					if sum(sum(abs(position-self.positions_in))) < 1E-6:
+						self.rot_fold.append(i+1)
+						break
+					else:
+						assert i < 5, 'Error: can not find fold of rotation symmetry {}'.format(rot)
+					
+			else:
+				self.rot_fold.append('None')
+		
 		show_symmetry(self.symmetry)
-		print(symmetry)
+		print('++++++++++++++++++++++++++++++++++++++++++++')
+		for i in range(self.num_atom):
+			print(self.positions_in[i])
+		print('++++++++++++++++++++++++++++++++++++++++++++')
+		for rot in range(self.nsymm):
+			trans = self.symmetry['translations'][rot]
+			if abs(trans[0]*trans[1]*trans[2]) < 1E-15:
+				for i in range(self.num_atom):
+					new_atom =np.round( np.dot(self.symmetry['rotations'][rot],self.positions_in[i]),decimals=6)
+					print(new_atom)
+				print("-----------------------------------------")
 		                
 
 	def symmetrize(self):
@@ -143,8 +188,6 @@ class sym_wann():
 			for ir in range(self.nRvec):
 				hh_R=(HH_R[:,:,ir] + np.dot(np.dot(ul,np.conj(HH_R[:,:,ir])),ur))/2.0
 				hh_R=np.array(hh_R)
-				#print('hh_R shape\n {}'.format(len(hh_R[0])))
-				#print('HH_R shape\n {}'.format(len(HH_R[0,:,ir])))
 				HH_R[0:self.num_wann:2,0:self.num_wann:2,ir]=hh_R[0:self.num_wann//2,0:self.num_wann//2]
 				HH_R[0:self.num_wann:2,1:self.num_wann:2,ir]=hh_R[0:self.num_wann//2,self.num_wann//2:self.num_wann]
 				HH_R[1:self.num_wann:2,0:self.num_wann:2,ir]=hh_R[self.num_wann//2:self.num_wann,0:self.num_wann//2]
@@ -152,9 +195,39 @@ class sym_wann():
 
 
 		#======add new blocks generated by rotation.
-		flag=[1 for i in range(self.nRvec)]
-		 
-
-
+		add=1
+		flag=np.ones((self.num_wann,self.num_wann,self.nRvec),dtype=int)
+		for rot in range(1,self.nsymm):
+			trans = self.symmetry['translations'][rot]
+			if abs(trans[0]*trans[1]*trans[2]) < 1E-15:
+				for rf in range(self.rot_fold[rot]):
+					for ir in range(self.nRvec):
+						Rvec=np.array(self.iRvec[ir])
+						position_atom=np.array(self.positions_in)
+						for atom in range(self.num_atom):
+							atom_position=position_atom[atom] + Rvec
+							new_atom =np.round( np.dot(self.symmetry['rotations'][rot],atom_position),decimals=6)
+							new_atom_index = 0
+							new_Rvec = 0
+							for atom_index in range(self.num_atom):
+								old_atom= np.array(self.positions_in[atom_index])
+								if sum((new_atom-old_atom) - np.array((new_atom-old_atom),dtype=int))<10E-6:
+									new_atom_index = atom_index
+									new_Rvec=list(np.array((new_atom-old_atom),dtype=int))
+							if new_Rvec in self.iRvec:
+								new_Rvec_index = self.iRvec.index(new_Rvec)
+							else:
+								add+=1
+								self.iRvec.append(new_Rvec)
+								new_Rvec_index=-1
+								new_hh_R=np.zeros((self.num_wann,self.num_wann,1))
+								new_flag = np.array(new_hh_R,dtype=int)
+								HH_R=np.concatenate((HH_R,new_hh_R),axis=2)
+								flag=np.concatenate((flag,new_flag),axis=2)
+						for hoping_index in list(self.atom_info[new_atom_index][4]):
+							HH_R[:,hoping_index,new_Rvec_index] += HH_R[:,hoping_index,ir]
+							flag[:,hoping_index,new_Rvec_index] += 1
+	# average
+		print(add)						
 		self.HH_R = HH_R
 
