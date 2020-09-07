@@ -1,6 +1,8 @@
 import numpy as np
 import spglib
+import numpy.linalg as la
 from atoms import Atoms
+import sympy as sym
 np.set_printoptions(threshold=np.inf)
 
 class sym_wann():
@@ -8,7 +10,6 @@ class sym_wann():
 		self.seedname=seedname
 		self.spin=spin
 		self.TR=TR
-
 	def read_hr(self):
 		f=open(self.seedname+"_hr.dat","r")
 		f.readline()
@@ -28,7 +29,6 @@ class sym_wann():
 						self.iRvec.append(list(np.array(hoppingline.split()[0:3],dtype=int)))
 					self.HH_R[m,n,ir]=(float(hoppingline.split()[5])+1j*float(hoppingline.split()[6]))/float(self.Ndegen[ir])
 
-
 	def write_hr(self):
 		name=self.seedname+"_sym_hr.dat"	
 		Ndegen=list(np.ones((self.nRvec),dtype=int))
@@ -47,6 +47,7 @@ class sym_wann():
 						line="{:5d}{:5d}{:5d}{:5d}{:5d}{:14.7f}{:14.7f}\n".format(rx,ry,rz,m+1,n+1,rp,ip)
 						f.write(line)
 			f.close()
+
 
 	def read_win(self):
 		name=self.seedname+".win"
@@ -70,7 +71,7 @@ class sym_wann():
 				else:
 					self.spin=False 
 		self.lattice = np.array([line.split() for line in win[lattice_op:lattice_ed]],dtype=float)
-		orbital_dic = {"s":1,"p":3,"d":5,"f":7,"sp3":4,"sp2":3,"l=0":1,"l=1":3,"l=2":5,"l=3":7}	
+		self.orbital_dic = {"s":1,"p":3,"d":5,"f":7,"sp3":4,"sp2":3,"l=0":1,"l=1":3,"l=2":5,"l=3":7}	
 		projectiondic={}
 		self.atom_info = []
 		self.symbols_in=[]
@@ -89,6 +90,7 @@ class sym_wann():
 		orbital_index=0
 		if self.spin: orb_spin = 2
 		else: orb_spin = 1
+		self.wannier_center=np.zeros([self.num_wann,3],dtype=float)
 		for npro in range(pro_op,pro_ed):
 			name = win[npro].split(":")[0].split()[0]
 			orb = win[npro].split(":")[1].split()
@@ -99,10 +101,12 @@ class sym_wann():
 				projectiondic.update(newdic)
 			for atom in range(self.num_atom):
 				if self.symbols_in[atom] == name:
-					num_orb = orb_spin * sum([orbital_dic[orb_name] for orb_name in orb])
+					num_orb = orb_spin * sum([self.orbital_dic[orb_name] for orb_name in orb])
 					orbital_index_old = orbital_index
 					orbital_index+=num_orb
 					orbital_index_list[atom] += [ i for i in range(orbital_index_old,orbital_index)]
+					for wc in range(orbital_index_old,orbital_index):
+						self.wannier_center[wc]=np.dot(self.positions_in[atom],self.lattice)
 		
 		for atom in range(self.num_atom):
 			name = self.symbols_in[atom]
@@ -112,9 +116,8 @@ class sym_wann():
 				projection=[]
 			self.atom_info.append((atom+1,self.symbols_in[atom],self.positions_in[atom],projection,orbital_index_list[atom]))
 		print(self.atom_info)
+	#	print(self.wannier_center)
 		
-	def get_index(lst=None,item=''):
-		return [index for (index,value) in enumerate(lst) if value == item]
 	
 	def findsym(self):
 		def show_symmetry(symmetry):
@@ -159,10 +162,141 @@ class sym_wann():
 		'''
 		find a mathod can reduce operators to generators
 		'''
+	def get_angle(self,sin,cos):
+		if round(sin,2) == 0:
+			sin = sin/abs(sin)
+		angle = np.arcsin(sin)
+		if round(cos,2) == 0:
+			angle = np.arcsin(sin)
+		elif sin>=0:
+			angle = np.arctan(sin/cos)%np.pi
+		elif sin < 0:
+			angle = np.arctan(sin/cos)%np.pi + np.pi
+		return round(angle*(2*np.pi),2)
+
+	def rot_orb(self,orb_symbol,rot_glb):
+		x = sym.Symbol('x')
+		y = sym.Symbol('y')
+		z = sym.Symbol('z')
+		def ss(x,y,z):
+			return 1+0*(x+y+z)
+		def pz(x,y,z):
+			return z
+		def px(x,y,z):
+			return x
+		def py(x,y,z):
+			return y
+		def dz2(x,y,z):
+			return (2*z*z-x*x-y*y)/(2*sym.sqrt(3.0))
+		def dxz(x,y,z):
+			return x*z
+		def dyz(x,y,z):
+			return y*z
+		def dx2_y2(x,y,z):
+			return (x*x-y*y)/2
+		def dxy(x,y,z):
+			return x*y
+		def fz3(x,y,z):
+			return z*(2*z*z-3*x*x-3*y*y)/(2*sym.sqrt(15.0))
+		def fxz2(x,y,z):
+			return x*(4*z*z-x*x-y*y)/(2*sym.sqrt(10.0))
+		def fyz2(x,y,z):
+			return y*(4*z*z-x*x-y*y)/(2*sym.sqrt(10.0))
+		def fzx2_zy2(x,y,z):
+			return z*(x*x-y*y)/2
+		def fxyz(x,y,z):
+			return x*y*z
+		def fx3_3xy2(x,y,z):
+			return x*(x*x-3*y*y)/(2*sym.sqrt(6.0))
+		def f3yx2_y3(x,y,z):
+			return y*(3*x*x-y*y)/(2*sym.sqrt(6.0))
+		orb_s = [ss]
+		orb_p = [pz,px,py]
+		orb_d = [dz2,dxz,dyz,dx2_y2,dxy]
+		orb_f = [fz3,fxz2,fyz2,fzx2_zy2,fxyz,fx3_3xy2,f3yx2_y3]
+		orb_function_dic={'s':orb_s,'p':orb_p,'d':orb_d,'f':orb_f}
+		orb_chara_dic={'s':[],'p':[z,x,y],'d':[z*z,x*z,y*z,x*x,x*y,y*y],'f':[z*z*z,x*z*z,y*z*z,z*x*x,x*y*z,x*x*x,y*y*y]}
+		orb_dim = self.orbital_dic[orb_symbol]
+		orb_rot_mat = np.zeros((orb_dim,orb_dim),dtype=float)
+		xp = np.dot(np.linalg.inv(rot_glb)[0],np.transpose([x,y,z]))
+		yp = np.dot(np.linalg.inv(rot_glb)[1],np.transpose([x,y,z]))
+		zp = np.dot(np.linalg.inv(rot_glb)[2],np.transpose([x,y,z]))
+		OC = orb_chara_dic[orb_symbol]
+		OC_len = len(OC)
+		for i in range(orb_dim):
+			e = orb_function_dic[orb_symbol][i](xp,yp,zp).expand()
+			if orb_symbol == 's':
+				orb_rot_mat[0,i] = e.subs(x,0).subs(y,0).subs(z,0).evalf()
+			elif orb_symbol == 'p':
+				for j in range(orb_dim):
+					orb_rot_mat[j,i] = e.subs(OC[j],1).subs(OC[(j+1)%OC_len],0).subs(OC[(j+2)%OC_len],0).evalf()
+			elif orb_symbol == 'd':
+				subs = []
+				for j in range(orb_dim):
+					subs.append(e.subs(OC[j],1).subs(OC[(j+1)%OC_len],0).subs(OC[(j+2)%OC_len],0).subs(OC[(j+3)%OC_len],0).subs(OC[(j+4)%OC_len],0).subs(OC[(j+5)%OC_len],0))
+				orb_rot_mat[0,i] = (subs[0]*sym.sqrt(3.0)).evalf()
+				orb_rot_mat[1,i] = subs[1].evalf()
+				orb_rot_mat[2,i] = subs[2].evalf()
+				orb_rot_mat[3,i] = (2*subs[3]+subs[0]/sym.sqrt(3.0)).evalf()
+				orb_rot_mat[4,i] = subs[4].evalf()
+			elif orb_symbol == 'f':
+				subs = []
+				for j in range(orb_dim):		
+					subs.append(e.subs(OC[j],1).subs(OC[(j+1)%OC_len],0).subs(OC[(j+2)%OC_len],0).subs(OC[(j+3)%OC_len],0).subs(OC[(j+4)%OC_len],0).subs(OC[(j+5)%OC_len],0).subs(OC[(j+6)%OC_len],0))
+				orb_rot_mat[0,i] = (subs[0]*sym.sqrt(15.0)).evalf()
+				orb_rot_mat[1,i] = (subs[1]*sym.sqrt(10.0)/2).evalf()
+				orb_rot_mat[2,i] = (subs[2]*sym.sqrt(10.0)/2).evalf()
+				orb_rot_mat[3,i] = (2*subs[3]+3*subs[0]/sym.sqrt(15.0)).evalf()
+				orb_rot_mat[4,i] = subs[4].evalf()
+				orb_rot_mat[5,i] = ((2*subs[5]+subs[1]/sym.sqrt(10.0))*sym.sqrt(6.0)).evalf()
+				orb_rot_mat[6,i] = ((-2*subs[6]-subs[2]/sym.sqrt(10.0))*sym.sqrt(6.0)).evalf()
+
+		return np.round(orb_rot_mat,decimals=6)
+	
+	def Part_P(self,rot_sym,orb_symbol):
+		rot_sym_glb = np.dot(np.dot(np.transpose(self.lattice),rot_sym),np.linalg.inv(np.transpose(self.lattice)) )
+		rot_sym_glb = np.round(rot_sym_glb,decimals=6)
+		if abs(np.dot(np.transpose(rot_sym_glb),rot_sym_glb) - np.eye(3)).sum() >1.0E-4:
+			print('rot_sym_glb is not orthogomal \n {}'.format(rot_sym_glb))
+		rot_sym_glb[:,1] = np.cross(rot_sym_glb[:,2],rot_sym_glb[:,0]) 
+		if self.spin:
+			#euler_angle=np.zeros((3),dtype=float)
+			beta = np.arccos(rot_sym_glb[2,2])
+			if round(abs(rot_sym_glb[2,2]),2) == 1.0:
+				gamma = 0.0
+				sin_alpha = rot_sym_glb[1,0] / rot_sym_glb[2,2]
+				cos_alpha = rot_sym_glb[1,1]
+				alpha = self.get_angle(sin_alpha,cos_alpha)
+			else:
+				sin_gamma = rot_sym_glb[2,1]/np.sin(beta)
+				cos_gamma = -rot_sym_glb[2,0]/np.sin(beta)
+				gamma = self.get_angle(sin_gamma,cos_gamma)
+				sin_alpha = rot_sym_glb[1,2]/np.sin(beta)
+				if round(abs(rot_sym_glb[2,2]),2) == 0.0:
+					if round(abs(rot_sym_glb[2,1]),2) == 0.0:
+						cos_alpha = rot_sym_glb[1,1]/np.cos(gamma)
+					else:
+						cos_alpha = rot_sym_glb[1,0]/np.sin(gamma)
+				else:
+					cos_alpha = rot_sym_glb[0,2]/rot_sym_glb[2,2]
+				alpha = self.get_angle(sin_alpha,cos_alpha)
+			#euler_angle = np.array([alpha,beta,gamma])
+			dmat = np.zeros((2,2),dtype=complex)
+			dmat[0,0] =  np.exp(-(alpha+gamma)/2.0 * 1j) * np.cos(beta/2.0)
+			dmat[0,1] = -np.exp(-(alpha-gamma)/2.0 * 1j) * np.sin(beta/2.0)
+			dmat[1,0] =  np.exp( (alpha-gamma)/2.0 * 1j) * np.sin(beta/2.0)
+			dmat[1,1] =  np.exp( (alpha+gamma)/2.0 * 1j) * np.cos(beta/2.0)
+			self.dmat=dmat
+		self.rot_sym_glb = rot_sym_glb
+		rot_orbital = self.rot_orb(orb_symbol,rot_sym_glb)
+		if self.spin:
+			rot_orbital = np.kron(rot_orbital,dmat)
+		
+		return rot_orbital
+
 
 	def symmetrize(self):
-		HH_R=self.HH_R	
-		
+		HH_R=self.HH_R
 		#====Hermitization====
 		for ir in range(self.nRvec):
 			neg_ir= self.iRvec.index( list(-1*np.array(self.iRvec[ir])) )
@@ -170,77 +304,110 @@ class sym_wann():
 				HH_R[:,:,ir]=(self.HH_R[:,:,ir] + np.conj(np.transpose(self.HH_R[:,:,neg_ir])) )/2.0
 			else:	
 				HH_R[:,:,ir]=(self.HH_R[:,:,ir] + np.conj(np.transpose(self.HH_R[:,:,neg_ir])) ).real/2.0
-		'''				
+		self.HH_R=HH_R
+		
+		print(self.HH_R[:,3,154].real)	
+		print(self.HH_R[3,:,68].real)	
+		'''
 		#====Time Reversal====
 		#syl: (sigma_y)^T *1j, syr: sigma_y*1j
 		if self.spin and self.TR:
 			base_m = np.eye(self.num_wann//2)
 			syl=np.array([[0.0,-1.0],[1.0,0.0]])
 			syr=np.array([[0.0,1.0],[-1.0,0.0]])
-			ul=np.kron(base_m,syl)
-			ur=np.kron(base_m,syr)
+			ul=np.kron(syl,base_m)
+			ur=np.kron(syr,base_m)
 			for ir in range(self.nRvec):
 				hh_R=(HH_R[:,:,ir] + np.dot(np.dot(ul,np.conj(HH_R[:,:,ir])),ur))/2.0
 				HH_R[:,:,ir]=hh_R
+		self.HH_R=HH_R
 		'''
+			
 		#======add new blocks generated by rotation.
 		nRvec=self.nRvec
 		flag=np.ones((self.num_wann,self.num_wann,self.nRvec),dtype=int)
-		print(flag)
-	#	for rot in range(1,self.nsymm):
-		for rot in range(0,1):
+		for rot in range(1,self.nsymm):
+#		for rot in range(0,2):
 			trans = self.symmetry['translations'][rot]
 			if abs(trans[0]*trans[1]*trans[2]) < 1E-15:
 				for ir in range(self.nRvec):
 					Rvec=np.array(self.iRvec[ir])
 					position_atom=np.array(self.positions_in)
-					for atom in range(self.num_atom):
-						atom_position=position_atom[atom] + Rvec
-						new_atom =np.round( np.dot(self.symmetry['rotations'][rot],atom_position),decimals=6)
-						for atom_index in range(self.num_atom):
-							old_atom= np.array(self.positions_in[atom_index])
-							diff = (new_atom-old_atom) - np.array((new_atom-old_atom),dtype=int)
-							if abs(diff[0])+abs(diff[0])+abs(diff[0])<10E-6:
-								print('------------------match------------------------')
-								if ir==89:
-									print('------------------89898989------------------------')
-								if ir==91:
-									print('------------------91919191------------------------')
-								new_Rvec=list(np.array(np.round((new_atom-old_atom),decimals=6),dtype=int))
-								print(self.symmetry['rotations'][rot])
-								print('atom_position = \n {}'.format(atom_position))
-								print('new atom =  {}'.format(new_atom))
-								print('old atom =  {}'.format(old_atom))
-								print('new_Rvec  =  {}'.format(new_Rvec))
-								print('match_atom_index = {}'.format(atom_index))
-								break
+					for atomran in range(self.num_atom):
+						if len(self.atom_info[atomran][4]) > 0:
+							atom_position=position_atom[atomran] + Rvec
+							new_atom =np.round( np.dot(self.symmetry['rotations'][rot],atom_position),decimals=6)
+							new_Rvec=0
+							for atom_index in range(self.num_atom):
+								old_atom= np.round(np.array(self.positions_in[atom_index]),decimals=6)
+								diff = (new_atom-old_atom) - np.array(np.round(new_atom-old_atom,decimals=5),dtype=int)
+								if abs(diff[0])+abs(diff[1])+abs(diff[2])<10E-5:
+									match_index=atom_index
+									new_Rvec=list(np.array(np.round((new_atom-old_atom),decimals=6),dtype=int))
+								else:
+									if atom_index==self.num_atom-1:
+										assert atom_index != 0,'Error!!!!: no atom can match the new one Rvec = {}, atom_index = {}'.format(self.iRvec[ir],atom_index)
+							if new_Rvec in self.iRvec:
+								new_Rvec_index = self.iRvec.index(new_Rvec)
 							else:
-								assert atom_index != self.num_atom,'Error!!!!: no atom can match the new one Rvec = {}, atom_index = {}'.format(self.iRvec[ir],atom_index)
-						if new_Rvec in self.iRvec:
-							print('Yes!, New Rvec is in self.iRvec')
-							new_Rvec_index = self.iRvec.index(new_Rvec)
-							print(self.iRvec[new_Rvec_index])
-							print(atom_index)
-							print('==================================================')
-						else:
-							print('Sorry!, New Rvec is not in self.iRvec')
-							print('==================================================')
-							self.iRvec.append(new_Rvec)
-							new_Rvec_index=-1
-							new_hh_R=np.zeros((self.num_wann,self.num_wann,1))
-							new_flag = np.array(new_hh_R,dtype=int)
-							HH_R=np.concatenate((HH_R,new_hh_R),axis=2)
-							flag=np.concatenate((flag,new_flag),axis=2)
-							nRvec+=1
-						for hoping_index in list(self.atom_info[atom_index][4]):
-							HH_R[:,hoping_index,new_Rvec_index] += HH_R[:,hoping_index,ir]
-							flag[:,hoping_index,new_Rvec_index] += 1
-		select=flag > 0
-		HH_R_average = HH_R
-		HH_R_average[select] = np.divide(HH_R[select],flag[select])
+								self.iRvec.append(new_Rvec)
+								new_Rvec_index=-1
+								new_hh_R=np.zeros((self.num_wann,self.num_wann,1))
+								new_flag = np.array(new_hh_R,dtype=int)
+								HH_R=np.concatenate((HH_R,new_hh_R),axis=2)
+								flag=np.concatenate((flag,new_flag),axis=2)
+								nRvec+=1
+							orbitals = self.atom_info[match_index][3]
+							p_mat = np.zeros((self.num_wann,self.num_wann),dtype = complex)
+							optmp = self.atom_info[match_index][4][0]
+							for orb in orbitals:
+								tmp = self.Part_P(self.symmetry['rotations'][rot],orb)
+								op=optmp
+								sp = 1
+								if self.spin: sp = 2
+								ed = op+sp*self.orbital_dic[orb]
+								optmp = ed
+								p_mat[op:ed,op:ed] = tmp
+							HH_new = np.dot(np.dot(np.conj(np.transpose(p_mat)),HH_R[:,:,ir]),p_mat) 
+							HH_R[:,:,new_Rvec_index] += HH_new 
+							select = np.round(HH_new,decimals=8) != 0.0
+							flag[select,new_Rvec_index] += 1
+			
 		self.nRvec=nRvec
-		self.HH_R = HH_R_average
-		print(self.iRvec[89])
-		print(self.iRvec[91])
+		select=flag > 0
+		print(HH_R[:,3,154].real)
+		print(HH_R[3,:,68].real)
+		HH_R_a=np.ones((self.num_wann,self.num_wann,self.nRvec),dtype=complex)*10000
+		HH_R_a[select] = np.divide(np.array(HH_R[select],dtype=complex),np.array(flag[select],dtype=float))
+		for ir in range (self.nRvec):
+			if sum(sum(HH_R_a[:,:,ir])).real < 5000:
+				HH_R_a[:,:,ir]=(HH_R_a[:,:,ir] + np.conj(np.transpose(HH_R_a[:,:,neg_ir])) )/2.0
+		select=HH_R_a>5000
+		HH_R_a[select]=0.0		
+		self.HH_R = HH_R_a
+
+		print(self.HH_R[:,3,154].real)
+		print(self.HH_R[3,:,68].real)
+
+	def eigHk(self,k):
+		k_list=list(k)
+		eig=[]
+		for kk in k_list:
+			Hk=np.zeros((self.num_wann,self.num_wann),dtype=complex)
+			for m in range(self.num_wann):
+				for n in range(self.num_wann):
+					for i in range(self.nRvec):
+						R=np.array(self.iRvec[i] + self.wannier_center[n] - self.wannier_center[m])
+						RR=np.dot(kk,R)
+						ratio=np.exp(1j*2*np.pi*RR)
+						Hk[m,n] = Hk[m,n] + ratio*self.HH_R[m,n,i]
+			eig.append(np.array(la.eigvalsh(Hk).real))
+		return np.array(eig)
+
+
+
+
+
+
 
 
