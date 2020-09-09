@@ -34,6 +34,8 @@ class sym_wann():
 					if m==0 and n==0:
 						self.iRvec.append(list(np.array(hoppingline.split()[0:3],dtype=int)))
 					self.HH_R[m,n,ir]=(float(hoppingline.split()[5])+1j*float(hoppingline.split()[6]))/float(self.Ndegen[ir])
+		print(self.HH_R[:,:,test1])
+		print(self.HH_R[:,:,test2])
 
 	def write_hr(self):
 		name=self.seedname+"_sym_hr.dat"	
@@ -139,7 +141,7 @@ class sym_wann():
 			else:
 				projection=[]
 			self.atom_info.append((atom+1,self.symbols_in[atom],self.positions_in[atom],projection,orbital_index_list[atom]))
-		print(self.atom_info)
+	#print(self.atom_info)
 	#	print(self.wannier_center)
 		
 	
@@ -187,7 +189,7 @@ class sym_wann():
 		find a mathod can reduce operators to generators
 		'''
 	def get_angle(self,sin,cos):
-		if round(sin,2) == 0:
+		if round(sin,2) == 1.0:
 			sin = sin/abs(sin)
 		angle = np.arcsin(sin)
 		if round(cos,2) == 0:
@@ -263,7 +265,7 @@ class sym_wann():
 				orb_rot_mat[0,i] = (subs[0]*sym.sqrt(3.0)).evalf()
 				orb_rot_mat[1,i] = subs[1].evalf()
 				orb_rot_mat[2,i] = subs[2].evalf()
-				orb_rot_mat[3,i] = (2*subs[3]+subs[0]/sym.sqrt(3.0)).evalf()
+				orb_rot_mat[3,i] = (2*subs[3]+subs[0]).evalf()
 				orb_rot_mat[4,i] = subs[4].evalf()
 			elif orb_symbol == 'f':
 				subs = []
@@ -277,12 +279,14 @@ class sym_wann():
 				orb_rot_mat[4,i] = subs[4].evalf()
 				orb_rot_mat[5,i] = ((2*subs[5]+subs[1]/sym.sqrt(10.0))*sym.sqrt(6.0)).evalf()
 				orb_rot_mat[6,i] = ((-2*subs[6]-subs[2]/sym.sqrt(10.0))*sym.sqrt(6.0)).evalf()
-
 		return np.round(orb_rot_mat,decimals=8)
 	
 	def Part_P(self,rot_sym,orb_symbol):
 		rot_sym_glb = np.dot(np.dot(np.transpose(self.lattice),rot_sym),np.linalg.inv(np.transpose(self.lattice)) )
+		#rot_sym_glb = np.dot(np.dot(self.lattice,rot_sym),np.linalg.inv(self.lattice) )
 		rot_sym_glb = np.round(rot_sym_glb,decimals=8)
+		print('rot_sym_glb')
+		print(rot_sym_glb)
 		if abs(np.dot(np.transpose(rot_sym_glb),rot_sym_glb) - np.eye(3)).sum() >1.0E-4:
 			print('rot_sym_glb is not orthogomal \n {}'.format(rot_sym_glb))
 		rot_sym_glb[:,1] = np.cross(rot_sym_glb[:,2],rot_sym_glb[:,0]) 
@@ -320,6 +324,22 @@ class sym_wann():
 			rot_orbital = np.kron(rot_orbital,dmat)
 		
 		return rot_orbital
+	'''
+	def rot_orb_test(self):
+		print('$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$')
+		for rot in range(self.nsymm):
+			print('rotation matrix = ')
+			print(self.symmetry['rotations'][rot])
+			orb_p = self.Part_P(self.symmetry['rotations'][rot],'p')
+			orb_s = self.Part_P(self.symmetry['rotations'][rot],'s')
+			orb_d = self.Part_P(self.symmetry['rotations'][rot],'d')
+			print('rot_orb_s')
+			print(orb_s)
+			print('rot_orb_d')
+			print(orb_d)
+			print('rot_orb_p')
+			print(orb_p)
+	'''
 
 
 	def symmetrize(self):
