@@ -7,10 +7,11 @@ np.set_printoptions(threshold=np.inf,linewidth=500)
 
 
 class sym_wann():
-	def __init__(self,seedname="wannier90",spin=False,TR=True):
+	def __init__(self,local_axis,seedname="wannier90",spin=False,TR=True):
 		self.seedname=seedname
 		self.spin=spin
 		self.TR=TR
+		self.local_axis=local_axis
 	def read_hr(self):
 		f=open(self.seedname+"_hr.dat","r")
 		f.readline()
@@ -46,7 +47,7 @@ class sym_wann():
 					for m in range(self.num_wann):
 						rp =self.HH_R[m,n,ir].real
 						ip =self.HH_R[m,n,ir].imag
-						line="{:5d}{:5d}{:5d}{:5d}{:5d}{:16.8f}{:16.8f}\n".format(rx,ry,rz,m+1,n+1,rp,ip)
+						line="{:5d}{:5d}{:5d}{:5d}{:5d}{:12.6f}{:12.6f}\n".format(rx,ry,rz,m+1,n+1,rp,ip)
 						f.write(line)
 			f.close()
 	def write_hr_old(self):
@@ -255,13 +256,13 @@ class sym_wann():
 				orb_rot_mat[6,i] = ((-2*subs[6]-subs[2]/2)*sym.sqrt(6.0)).evalf()
 		return np.round(orb_rot_mat,decimals=8)
 	
-	def Part_P(self,rot_sym,orb_symbol):
+	def Part_P(self,rot_sym_glb,orb_symbol):
 		#print('rot')
 		#print(rot_sym)
-		rot_sym_glb = np.dot(np.dot(np.transpose(self.lattice),rot_sym),np.linalg.inv(np.transpose(self.lattice)) )
-		rot_sym_glb = np.round(rot_sym_glb,decimals=8)
-		print('rot_glb')
-		print(rot_sym_glb)
+		#rot_sym_glb = np.dot(np.dot(np.transpose(self.lattice),rot_sym),np.linalg.inv(np.transpose(self.lattice)) )
+		#rot_sym_glb = np.round(rot_sym_glb,decimals=8)
+		#print('rot_glb')
+		#print(rot_sym_glb)
 		if abs(np.dot(np.transpose(rot_sym_glb),rot_sym_glb) - np.eye(3)).sum() >1.0E-4:
 			print('rot_sym_glb is not orthogomal \n {}'.format(rot_sym_glb))
 		rmat = np.linalg.det(rot_sym_glb)*rot_sym_glb 
@@ -297,7 +298,7 @@ class sym_wann():
 		if self.spin:
 			print(dmat)
 			rot_orbital = np.kron(rot_orbital,dmat)
-			#rot_orbital = np.kron(rot_orbital,np.array([[1.,0.],[0.,-1.]]))
+			#rot_orbital = np.kron(rot_orbital,np.array([[1.,0.],[0.,1.]]))
 		select = abs(rot_orbital)<1E-5
 		rot_orbital[select]=0.0
 		return rot_orbital
@@ -305,11 +306,21 @@ class sym_wann():
 	def rot_orb_test(self):
 		for rot in range(self.nsymm):
 			print('$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$')
-			print('rotation matrix = ')
-			print(self.symmetry['rotations'][rot])
-			orb_p = self.Part_P(self.symmetry['rotations'][rot],'p')
-			orb_s = self.Part_P(self.symmetry['rotations'][rot],'s')
-			orb_d = self.Part_P(self.symmetry['rotations'][rot],'d')
+			print('rotation matrix sym={}'.format(rot))
+			rotmat = self.symmetry['rotations'][rot]
+			print(rotmat)
+			print(rot_loc_glb)
+			local_a = self.local_axis[0]
+			local_b = self.local_axis[2]
+			rot_sym = self.symmetry['rotations'][rot]
+			rot_sym_glb = np.dot(np.dot(np.transpose(self.lattice),rot_sym),np.linalg.inv(np.transpose(self.lattice)) )
+			rot_loc_glb = np.dot(np.dot(np.transpose(local_b),rot_sym_glb),local_a) 
+			#orb_p = self.Part_P(rotmat,'p')
+			#orb_s = self.Part_P(rotmat,'s')
+			#orb_d = self.Part_P(rotmat,'d')
+			orb_p = self.Part_P(rot_loc_glb,'p')
+			orb_s = self.Part_P(rot_loc_glb,'s')
+			orb_d = self.Part_P(rot_loc_glb,'d')
 			print('rot_orb_s')
 			print(orb_s)
 			print('rot_orb_p')
@@ -331,9 +342,9 @@ class sym_wann():
 		rot_map=[]
 		for atomran in range(self.num_wann_atom):
 			atom_position=np.array(wann_atom_positions[atomran])
-			new_atom =np.round( np.dot(self.symmetry['rotations'][sym],atom_position) + self.symmetry['translations'][sym],decimals=8)
+			new_atom =np.round( np.dot(self.symmetry['rotations'][sym],atom_position) + self.symmetry['translations'][sym],decimals=5)
 			for atom_index in range(self.num_wann_atom):
-				old_atom= np.round(np.array(wann_atom_positions[atom_index]),decimals=8)
+				old_atom= np.round(np.array(wann_atom_positions[atom_index]),decimals=5)
 				diff = np.array(np.round(new_atom-old_atom,decimals=8))
 				if abs(diff[0]%1)+abs(diff[1]%1)+abs(diff[2]%1)<10E-5:
 					match_index=atom_index
@@ -341,9 +352,9 @@ class sym_wann():
 				else:
 					if atom_index==self.num_atom-1:
 						assert atom_index != 0,'Error!!!!: no atom can match the new one Rvec = {}, atom_index = {}'.format(self.iRvec[ir],atom_index)
-			print('old',atom_position)
-			print('new',new_atom)
-			print('match',np.array(wann_atom_positions[match_index]))
+	#		print('old',atom_position)
+	#		print('new',new_atom)
+	#		print('match',np.array(wann_atom_positions[match_index]))
 			print(vec_shift)
 			rot_map.append((match_index,vec_shift))
 		return rot_map
@@ -354,13 +365,32 @@ class sym_wann():
 			print(self.symmetry['rotations'][i])
 			rot_map = self.atom_rot_map(i)
 			print(rot_map)
-	def full_p_mat(self,match_index,rot):
-		orbitals = self.wann_atom_info[match_index][3]
+	def full_p_mat(self,atom_index,rot,rot_map):
+		orbitals = self.wann_atom_info[atom_index][3]
 		p_mat = np.zeros((self.num_wann,self.num_wann),dtype = complex)
-		wann_index_list = self.wann_atom_info[match_index][4]
+		wann_index_list = self.wann_atom_info[atom_index][4]
 		optmp = wann_index_list[0]
+		local_a = self.local_axis[atom_index]
+		local_b = self.local_axis[rot_map[atom_index][0]]
+		#local_a = self.local_axis[0]
+		#local_b = self.local_axis[2]
+		rot_sym = self.symmetry['rotations'][rot]
+		rot_sym_glb = np.dot(np.dot(np.transpose(self.lattice),rot_sym),np.linalg.inv(np.transpose(self.lattice)) )
+		rot_loc_glb = np.dot(np.dot(np.transpose(local_b),rot_sym_glb),local_a) 
+		#rot_loc_glb = np.dot(np.dot(np.dot(np.linalg.inv(local_a),rot_sym_glb),local_a), np.dot(np.transpose(local_b),local_a)) 
+		rot_loc_glb = np.round(rot_loc_glb,decimals=8)
+		print('rot')
+		print(rot_sym)
+		print('rot_sym_glb')
+		print(rot_sym_glb)
+		print('rot_loc')
+		print(rot_loc_glb)
+		print('atom_index =    ',atom_index)
+		print('match_index =    ',rot_map[atom_index][0])
+		print('local_a \n',local_a)
+		print('local_b \n',local_b)
 		for orb in orbitals:
-			tmp = self.Part_P(self.symmetry['rotations'][rot],orb)
+			tmp = self.Part_P(rot_loc_glb,orb)
 			op=optmp
 			sp = 1
 			if self.spin: sp = 2
@@ -381,6 +411,13 @@ class sym_wann():
 			else:	
 				HH_R[:,:,ir]=(self.HH_R[:,:,ir] + np.conj(np.transpose(self.HH_R[:,:,neg_ir])) ).real/2.0
 		self.HH_R=HH_R*1.0
+		if self.spin:
+			HH_R_spin = self.HH_R*0.0
+			HH_R_spin[0:self.num_wann:2,0:self.num_wann:2,:] = self.HH_R[0:self.num_wann//2,0:self.num_wann//2,:]
+			HH_R_spin[1:self.num_wann:2,0:self.num_wann:2,:] = self.HH_R[self.num_wann//2:self.num_wann,0:self.num_wann//2,:]
+			HH_R_spin[0:self.num_wann:2,1:self.num_wann:2,:] = self.HH_R[0:self.num_wann//2,self.num_wann//2:self.num_wann,:]
+			HH_R_spin[1:self.num_wann:2,1:self.num_wann:2,:] = self.HH_R[self.num_wann//2:self.num_wann,self.num_wann//2:self.num_wann,:]
+			HH_R = HH_R_spin*1.0		
 		'''
 		#====Time Reversal====
 		#syl: (sigma_y)^T *1j, syr: sigma_y*1j
@@ -395,7 +432,7 @@ class sym_wann():
 				HH_R[:,:,ir]=hh_R
 		self.HH_R=HH_R
 		'''
-		HH_R_copy = self.HH_R*1		
+		HH_R_copy = HH_R*1		
 		#======add new blocks generated by rotation.
 		nRvec=self.nRvec
 		flag=np.ones((self.num_wann,self.num_wann,self.nRvec),dtype=int)
@@ -408,29 +445,36 @@ class sym_wann():
 				Rvec=np.array(self.iRvec[ir])
 				new_Rvec_tmp=np.array(np.round(np.dot(self.symmetry['rotations'][rot],Rvec),decimals=8),dtype=int)
 				for atomran in range(self.num_wann_atom):
+				#	for atomran_0 in range(self.num_wann_atom):	
 					for atomran_0 in [rot_map[atomran][0]]:	
-						print('rot')
-						print(self.symmetry['rotations'][rot])
+					#	print('rot')
+					#	print(self.symmetry['rotations'][rot])
 						rotglb = np.dot(np.dot(np.transpose(self.lattice),self.symmetry['rotations'][rot] ),np.linalg.inv(np.transpose(self.lattice)) )
 						new_Rvec = list(np.dot(self.symmetry['rotations'][rot],self.iRvec[ir]) - rot_map[atomran_0][1]  + rot_map[atomran][1])
 						new_Rvec = [int(round(new_Rvec[0])),int(round(new_Rvec[1])),int(round(new_Rvec[2]))]
-						print(new_Rvec)
-						if new_Rvec in self.iRvec:
+					#	print(new_Rvec)
+						if new_Rvec in self.iRvec and list(Rvec+self.wann_atom_info[atomran][2]) != list(np.array(new_Rvec)+self.wann_atom_info[rot_map[atomran][0]][2]):
 							new_Rvec_index = self.iRvec.index(new_Rvec)
-							p_mat_a ,ao,ae = self.full_p_mat(atomran,rot)
-							p_mat_b ,bo,be= self.full_p_mat(atomran_0,rot)
+							p_mat_a ,ao,ae = self.full_p_mat(atomran,rot,rot_map)
+							p_mat_b ,bo,be= self.full_p_mat(atomran_0,rot,rot_map)
 							apo = self.wann_atom_info[rot_map[atomran][0]][4][0]		
 							ape = self.wann_atom_info[rot_map[atomran][0]][4][-1]+1		
 							bpo = self.wann_atom_info[rot_map[atomran_0][0]][4][0]		
 							bpe = self.wann_atom_info[rot_map[atomran_0][0]][4][-1]+1		
-							HH_new_tmp = np.round(np.dot(np.dot(np.conj(np.transpose(p_mat_b)),HH_R_copy[bpo:bpe,apo:ape,new_Rvec_index]),p_mat_a),decimals=6)
+							HH_new_tmp = np.round(np.dot(np.dot(np.conj(np.transpose(p_mat_b)),HH_R_copy[bpo:bpe,apo:ape,new_Rvec_index]),p_mat_a),decimals=8)
+							new_Rvec_index= self.iRvec.index(new_Rvec)	
+						#	if ir == 100:
 							print('??????')							
 							print(p_mat_b)
 							print(HH_new_tmp)
 							print(HH_R_copy[bo:be,ao:ae,ir])
-							new_Rvec_index= self.iRvec.index(new_Rvec)	
 							print(HH_R_copy[bpo:bpe,apo:ape,new_Rvec_index])
-							print('??????')
+							#	print(HH_R_copy[:,:,ir])
+							#	print(HH_R_copy[:,:,new_Rvec_index])
+						
+							select = np.eye(self.num_wann) > 0
+							print(HH_R[select,ir])
+					#		print('??????')
 							HH_R[bo:be,ao:ae,ir] += HH_new_tmp
 							flag[bo:be,ao:ae,ir] += 1	
 		self.nRvec=nRvec
@@ -438,10 +482,32 @@ class sym_wann():
 		select= flag == 0
 		flag[select] = 1
 		HH_R_a = np.round(np.divide(np.array(HH_R,dtype=complex),np.array(flag,dtype=float)),decimals=8)
-		for i in range(self.nRvec):
-			neg_i= self.iRvec.index( list(-1*np.array(self.iRvec[i])) )
-			HH_R_a[:,:,i] = np.round( HH_R_a[:,:,i] - (HH_R_a[:,:,i] - np.conj(np.transpose(HH_R_a[:,:,neg_i]))),decimals=6 )
-		self.HH_R = HH_R_a
+		print('HH_R')
+		print(HH_R[0:6,0:6,100])
+		print(flag[0:6,0:6,100])
+
+
+#		for i in range(self.nRvec):
+#			neg_i= self.iRvec.index( list(-1*np.array(self.iRvec[i])) )
+#			HH_R_a[:,:,i] = np.round( HH_R_a[:,:,i] - (HH_R_a[:,:,i] - np.conj(np.transpose(HH_R_a[:,:,neg_i]))),decimals=6 )
+		if self.spin:
+			HH_R_re = self.HH_R*1.0
+			HH_R_re[0:self.num_wann//2,0:self.num_wann//2,:]                         = HH_R_a[0:self.num_wann:2,0:self.num_wann:2,:]
+			HH_R_re[self.num_wann//2:self.num_wann,0:self.num_wann//2,:]             = HH_R_a[1:self.num_wann:2,0:self.num_wann:2,:]
+			HH_R_re[0:self.num_wann//2,self.num_wann//2:self.num_wann,:]             = HH_R_a[0:self.num_wann:2,1:self.num_wann:2,:]
+			HH_R_re[self.num_wann//2:self.num_wann,self.num_wann//2:self.num_wann,:] = HH_R_a[1:self.num_wann:2,1:self.num_wann:2,:]
+			select = np.eye(self.num_wann) > 0
+			print('old')
+			print(self.HH_R[select,100])
+			print('new')
+			print(HH_R_a[select,100])
+			print(HH_R_re[select,100])
+			self.HH_R = HH_R_re*1.0
+		else:
+			self.HH_R = HH_R_a*1.0
+
+
+		
 		def test_H(ll):
 			a = self.iRvec.index(ll)
 			b = self.iRvec.index(list(-1*np.array(ll)))
