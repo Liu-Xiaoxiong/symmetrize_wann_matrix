@@ -16,7 +16,6 @@ class sym_wann():
 		f.readline()
 		self.num_wann=int(f.readline())
 		self.nRvec=int(f.readline())
-		self.nRvec_old=self.nRvec*1
 		self.Ndegen=[]
 		while len(self.Ndegen)<self.nRvec:
 			self.Ndegen+=f.readline().split()
@@ -30,6 +29,35 @@ class sym_wann():
 					if m==0 and n==0:
 						self.iRvec.append(list(np.array(hoppingline.split()[0:3],dtype=int)))
 					self.HH_R[m,n,ir]=(float(hoppingline.split()[5])+1j*float(hoppingline.split()[6]))/float(self.Ndegen[ir])
+
+	def read_tb(self):
+		f=open(self.seedname+"_tb.dat","r")
+		f.readline()
+		self.real_lattice=np.array([f.readline().split()[:3] for i in range(3)],dtype=float)
+		self.num_wann=int(f.readline())
+		self.nRvec=int(f.readline())
+		self.Ndegen=[]
+		while len(self.Ndegen)<self.nRvec:
+			self.Ndegen+=f.readline().split()
+		self.Ndegen=np.array(self.Ndegen,dtype=int)
+		self.iRvec=[]
+		self.HH_R=np.zeros( (self.num_wann,self.num_wann,self.nRvec) ,dtype=complex)
+		for ir in range(self.nRvec):
+			f.readline()
+			self.iRvec.append(list(np.array(f.readline().split()[0:3],dtype=int)))
+			hh=np.array( [[f.readline().split()[2:4]
+				for n in range(self.num_wann)]
+				for m in range(self.num_wann)],dtype=float).transpose( (1,0,2) )
+			self.HH_R[:,:,ir]=(hh[:,:,0]+1j*hh[:,:,1])/self.Ndegen[ir]
+		self.AA_R=np.zeros( (self.num_wann,self.num_wann,self.nRvec,3) ,dtype=complex)
+		for ir in range(self.nRvec):
+			f.readline()
+			assert (np.array(f.readline().split(),dtype=int)==np.array(self.iRvec[ir],dtype=int)).all()
+			aa=np.array( [[f.readline().split()[2:8]
+					for n in range(self.num_wann)]
+					for m in range(self.num_wann)],dtype=float)
+			self.AA_R[:,:,ir,:]=(aa[:,:,0::2]+1j*aa[:,:,1::2]).transpose( (1,0,2) ) /self.Ndegen[ir]
+
 
 	def write_hr(self):
 		name=self.seedname+"_sym_hr.dat"	
@@ -50,6 +78,40 @@ class sym_wann():
 						f.write(line)
 			f.close()
 
+	def write_tb(self):
+		name=self.seedname+"_sym_tb.dat"	
+		Ndegen=list(np.ones((self.nRvec),dtype=int))
+		with open(name,"w") as f:
+			f.write("symmetrize wannier tb\n")
+			for vi in range(3):
+				line = "{:21.16f}{:21.16f}{:21.16f}\n".format(self.real_lattice[vi,0],self.real_lattice[vi,1],self.real_lattice[vi,2])	
+				f.write(line)
+			f.write(str(self.num_wann)+"\n"+str(self.nRvec)+"\n")
+			nl = np.int32(np.ceil(self.nRvec/15.0))
+			for l in range(nl):
+				line="    "+'    '.join([str(np.int32(i)) for i in Ndegen[l*15:(l+1)*15]])
+				f.write(line+"\n")
+			for ir in range(self.nRvec):
+				f.write('\n')
+				rx = int(self.iRvec[ir][0]);ry = int(self.iRvec[ir][1]);rz = int(self.iRvec[ir][2])
+				f.write("{:5d}{:5d}{:5d}\n".format(rx,ry,rz))
+				for n in range(self.num_wann):
+					for m in range(self.num_wann):
+						rp =self.HH_R[m,n,ir].real
+						ip =self.HH_R[m,n,ir].imag
+						line="{:5d}{:5d}{:18.8E}{:18.8E}\n".format(m+1,n+1,rp,ip)
+						f.write(line)
+			for ir in range(self.nRvec):
+				f.write('\n')
+				rx = int(self.iRvec[ir][0]);ry = int(self.iRvec[ir][1]);rz = int(self.iRvec[ir][2])
+				f.write("{:5d}{:5d}{:5d}\n".format(rx,ry,rz))
+				for n in range(self.num_wann):
+					for m in range(self.num_wann):
+						rp =self.AA_R[m,n,ir,:].real
+						ip =self.AA_R[m,n,ir,:].imag
+						line="{:5d}{:5d}{:18.8E}{:18.8E}{:18.8E}{:18.8E}{:18.8E}{:18.8E}\n".format(m+1,n+1,rp[0],rp[1],rp[2],ip[0],ip[1],ip[2])
+						f.write(line)
+			f.close()
 
 	def read_win(self):
 		name=self.seedname+".win"
@@ -247,7 +309,7 @@ class sym_wann():
 				orb_rot_mat[4,i] = subs[4].evalf()
 				orb_rot_mat[5,i] = ((2*subs[5]+subs[1]/2)*sym.sqrt(6.0)).evalf()
 				orb_rot_mat[6,i] = ((-2*subs[6]-subs[2]/2)*sym.sqrt(6.0)).evalf()
-		return np.round(orb_rot_mat,decimals=8)
+		return orb_rot_mat
 	
 	def Part_P(self,rot_sym_glb,orb_symbol):
 		if abs(np.dot(np.transpose(rot_sym_glb),rot_sym_glb) - np.eye(3)).sum() >1.0E-4:
@@ -402,7 +464,7 @@ class sym_wann():
 				print('$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$ sym={}'.format(rot))
 				rot_map = self.atom_rot_map(rot)
 				Rvec=np.array(self.iRvec[ir])
-				new_Rvec_tmp=np.array(np.round(np.dot(self.symmetry['rotations'][rot],Rvec),decimals=8),dtype=int)
+				new_Rvec_tmp=np.array(np.round(np.dot(self.symmetry['rotations'][rot],Rvec),decimals=6),dtype=int)
 				for atomran in range(self.num_wann_atom):
 					for atomran_0 in range(self.num_wann_atom):	
 		#			for atomran_0 in [rot_map[atomran][0]]:	
@@ -418,7 +480,7 @@ class sym_wann():
 							p_mat_b,nb = self.full_p_mat(atomran_0,rot,rot_map)
 							ba_select = self.select_uni[atomran_0*self.num_wann_atom + atomran]
 							bap_select = self.select_uni[rot_map[atomran_0][0] * self.num_wann_atom + rot_map[atomran][0]]
-							HH_new_tmp = np.round(np.dot(np.dot(np.conj(np.transpose(p_mat_b)),HH_R_copy[bap_select,new_Rvec_index].reshape(nb,na)),p_mat_a),decimals=8)
+							HH_new_tmp = np.dot(np.dot(np.conj(np.transpose(p_mat_b)),HH_R_copy[bap_select,new_Rvec_index].reshape(nb,na)),p_mat_a)
 							new_Rvec_index= self.iRvec.index(new_Rvec)	
 							print('??????')							
 							print(p_mat_b)
