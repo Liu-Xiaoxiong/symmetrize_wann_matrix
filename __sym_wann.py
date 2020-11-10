@@ -325,7 +325,7 @@ class sym_wann():
 		if abs(np.dot(np.transpose(rot_sym_glb),rot_sym_glb) - np.eye(3)).sum() >1.0E-4:
 			print('rot_sym is not orthogomal \n {}'.format(rot_sym_glb))
 		rmat = np.linalg.det(rot_sym_glb)*rot_sym_glb
-		#rmat = rot_sym_glb*1
+		#rmat = rot_sym_glb
 		select = np.abs(rmat) < 0.01
 		rmat[select] = 0.0 
 		select = rmat > 0.99 
@@ -349,14 +349,14 @@ class sym_wann():
 				beta = 0.0
 				if rmat[2,2] == -1. :beta = np.pi
 				gamma = 0.0
-				if rmat[0,0] == -1*rmat[1,1] and abs(rmat[0,0]) == 1:
-					a='not equal'
-					alpha = np.pi
-				else: 
-					a='equal' 
-					alpha = np.arccos(rmat[1,1])
+			#	if rmat[0,0] == -1*rmat[1,1] and  abs(rmat[0,0])==1:
+			#		a='not equal'
+			#		alpha = 0
+			#	else: 
+			#		a='equal' 
+				alpha = np.arccos(rmat[1,1])
 				if rmat[0,1] > 0.0:alpha = -1.0*alpha
-				print('two',a)	
+				print('two')	
 				
 			euler_angle = np.array([alpha,beta,gamma])
 			print('euler_angle',euler_angle)
@@ -373,6 +373,7 @@ class sym_wann():
 			rot_imag[abs(rot_imag) < 10e-6] = 0
 			rot_real[abs(rot_real) < 10e-6] = 0
 			rot_orbital = np.array(rot_real + 1j*rot_imag,dtype=complex)
+		print(dmat)
 		print(rot_orbital)
 		print('thhhhhhhhhhhhhhere')
 		return rot_orbital
