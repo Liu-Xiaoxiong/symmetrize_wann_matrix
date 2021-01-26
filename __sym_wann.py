@@ -8,11 +8,10 @@ np.set_printoptions(precision=4,threshold=np.inf,linewidth=500)
 
 
 class sym_wann():
-    def __init__(self,seedname="wannier90",local_axis=None,spin=False,TR=True):
+    def __init__(self,seedname="wannier90",spin=False,TR=True):
         self.seedname=seedname
         self.spin=spin
         self.TR=TR
-        self.local_axis=local_axis
 
     def read_tb(self):
         f=open(self.seedname+"_tb.dat","r")
@@ -111,7 +110,7 @@ class sym_wann():
         orbital_index=0
         for npro in range(pro_op,pro_ed):
             name = win[npro].split(":")[0].split()[0]
-            orb = win[npro].split(":")[1].strip('\n').split(';')
+            orb = win[npro].split(":")[1].strip('\n').strip()
             if name in projectiondic.keys():
                 projectiondic[name]=projectiondic[name]+orb			
             else:
@@ -145,7 +144,9 @@ class sym_wann():
                 for oa in range(len(orb_name_a)):
                     for ob in range(len(orb_name_b)):
                         self.H_select[atom_a,atom_b,orb_op_a[oa]:orb_ed_a[oa],orb_op_b[ob]:orb_ed_b[ob]]=True
-        print(self.wann_atom_info)
+        print('Wannier atoms info')
+        for i in range(self.num_wann_atom):
+            print(self.wann_atom_info[i])
 			
 	
     def findsym(self):
@@ -182,38 +183,22 @@ class sym_wann():
         x = sym.Symbol('x')
         y = sym.Symbol('y')
         z = sym.Symbol('z')
-        def ss(x,y,z):
-            return 1+0*(x+y+z)
-        def pz(x,y,z):
-            return z
-        def px(x,y,z):
-            return x
-        def py(x,y,z):
-            return y
-        def dz2(x,y,z):
-            return (2*z*z-x*x-y*y)/(2*sym.sqrt(3.0))
-        def dxz(x,y,z):
-            return x*z
-        def dyz(x,y,z):
-            return y*z
-        def dx2_y2(x,y,z):
-            return (x*x-y*y)/2
-        def dxy(x,y,z):
-            return x*y
-        def fz3(x,y,z):
-            return z*(2*z*z-3*x*x-3*y*y)/(2*sym.sqrt(15.0))
-        def fxz2(x,y,z):
-            return x*(4*z*z-x*x-y*y)/(2*sym.sqrt(10.0))
-        def fyz2(x,y,z):
-            return y*(4*z*z-x*x-y*y)/(2*sym.sqrt(10.0))
-        def fzx2_zy2(x,y,z):
-            return z*(x*x-y*y)/2
-        def fxyz(x,y,z):
-            return x*y*z
-        def fx3_3xy2(x,y,z):
-            return x*(x*x-3*y*y)/(2*sym.sqrt(6.0))
-        def f3yx2_y3(x,y,z):
-            return y*(3*x*x-y*y)/(2*sym.sqrt(6.0))
+        def ss(x,y,z): return 1+0*(x+y+z)
+        def pz(x,y,z): return z
+        def px(x,y,z): return x
+        def py(x,y,z): return y
+        def dz2(x,y,z): return (2*z*z-x*x-y*y)/(2*sym.sqrt(3.0))
+        def dxz(x,y,z): return x*z
+        def dyz(x,y,z): return y*z
+        def dx2_y2(x,y,z): return (x*x-y*y)/2
+        def dxy(x,y,z): return x*y
+        def fz3(x,y,z): return z*(2*z*z-3*x*x-3*y*y)/(2*sym.sqrt(15.0))
+        def fxz2(x,y,z): return x*(4*z*z-x*x-y*y)/(2*sym.sqrt(10.0))
+        def fyz2(x,y,z): return y*(4*z*z-x*x-y*y)/(2*sym.sqrt(10.0))
+        def fzx2_zy2(x,y,z): return z*(x*x-y*y)/2
+        def fxyz(x,y,z): return x*y*z
+        def fx3_3xy2(x,y,z): return x*(x*x-3*y*y)/(2*sym.sqrt(6.0))
+        def f3yx2_y3(x,y,z): return y*(3*x*x-y*y)/(2*sym.sqrt(6.0))
         orb_s = [ss]
         orb_p = [pz,px,py]
         orb_d = [dz2,dxz,dyz,dx2_y2,dxy]
@@ -226,10 +211,6 @@ class sym_wann():
         yp = np.dot(np.linalg.inv(rot_glb)[1],np.transpose([x,y,z]))
         zp = np.dot(np.linalg.inv(rot_glb)[2],np.transpose([x,y,z]))
         rot_glb=np.array(list(rot_glb))
-        #print('inv')
-        #print(np.linalg.inv(rot_glb))
-        #print('xp,yp,zp')
-        #print(xp,yp,zp)
         OC = orb_chara_dic[orb_symbol]
         OC_len = len(OC)
         for i in range(orb_dim):
@@ -415,9 +396,13 @@ class sym_wann():
             else:
                     return  H_res/self.nsymm				
         H_res_exist = HH_R*0.0
+        print('##########################')
+        print('Existing Block')
         HH_R_re1, iRvec_add =  average_H(self,H_res_exist,self.iRvec,keep_New_R=True)
         nRvec_add = len(iRvec_add)
         H_res_add=np.zeros((self.num_wann,self.num_wann,nRvec_add),dtype=complex)
+        print('##########################')
+        print('Additional Block')
         HH_R_re2  =  average_H(self,H_res_add,iRvec_add,keep_New_R=False)
         HH_R_a = np.zeros((self.num_wann,self.num_wann,nRvec_add+self.nRvec),dtype=complex)
         HH_R_a[:,:,:self.nRvec]=HH_R_re1
