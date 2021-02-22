@@ -10,3 +10,7 @@ NOTE: YOU CAN NOT USE MLWF WHEN YOU RUN WANNIER90. (Which means set num_iter=0 i
 
 An example is given in Example folder.
 RUN: ``python3 plot.py``
+
+Not only the Hamiltonian matrix can be symmetrized in this method, but also position element matrix, spin matrix et. al. (Will be implemented in WannierBerri soon https://github.com/stepan-tsirkin/wannier-berri)
+
+Thanks for the help of Changming Yue (UniFR CH).
