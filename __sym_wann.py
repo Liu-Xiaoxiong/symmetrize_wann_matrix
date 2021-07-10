@@ -12,7 +12,7 @@ class sym_wann():
         self.seedname=seedname
         self.spin=spin
         self.TR=TR
-
+        print('1',self.spin)
     def read_tb(self):
         f=open(self.seedname+"_tb.dat","r")
         f.readline()
@@ -79,11 +79,12 @@ class sym_wann():
                 atom_op=ii+1
             if "end atoms_cart" in line:
                 atom_ed=ii
-            if "spinors" in line:
-                if "t" or "T" in line:
-                    self.spin=True
-                else:
-                    self.spin=False 
+            #if "spinors" in line:
+            #   if "t" or "T" in line:
+            #        self.spin=True
+            #    else:
+            #        self.spin=False 
+        print('2',self.spin)
         self.lattice = np.array([line.split() for line in win[lattice_op:lattice_ed]],dtype=float)
         self.orbital_dic = {"s":1,"p":3,"d":5,"f":7,"sp3":4,"sp2":3,"l=0":1,"l=1":3,"l=2":5,"l=3":7}	
         projectiondic={}
@@ -97,9 +98,9 @@ class sym_wann():
             self.symbols_in.append(atom_name)
             self.positions_in.append(list( np.round(np.dot(position,np.linalg.inv(self.lattice)),decimals=8) ))			
         self.num_atom = len(self.symbols_in)
-
         if self.spin: orb_spin = 2
         else: orb_spin = 1
+        print('3',self.spin)
         orbital_index_list=[]
         orb_op=[]
         orb_ed=[]
@@ -359,7 +360,7 @@ class sym_wann():
             self.HH_R = HH_R_spin*1.0		
         else:
             self.HH_R = HH_R*1.0	
-        test_i = self.iRvec.index([1,1,1])	
+       # test_i = self.iRvec.index([1,1,0])	
         def average_H(self,H_res,iRvec,keep_New_R=True):
             R_list = np.array(iRvec,dtype=int)
             nRvec=len(R_list)
@@ -391,6 +392,10 @@ class sym_wann():
                         for atom_b in range(self.num_wann_atom):
                             tmp = np.dot(np.dot(p_map_dagger[atom_a],HH_all[:,atom_a,atom_b]),p_map[atom_b])
                             H_res += tmp.transpose(0,2,1)
+           #                 if atom_a ==0 and atom_b == 0:
+           #                     print(tmp.transpose(0,2,1)[self.H_select[atom_a,atom_b]],test_i)
+
+
             if keep_New_R:
                     return  H_res/self.nsymm, tmp_R_list
             else:
@@ -401,14 +406,18 @@ class sym_wann():
         HH_R_re1, iRvec_add =  average_H(self,H_res_exist,self.iRvec,keep_New_R=True)
         nRvec_add = len(iRvec_add)
         H_res_add=np.zeros((self.num_wann,self.num_wann,nRvec_add),dtype=complex)
-        print('##########################')
-        print('Additional Block')
-        HH_R_re2  =  average_H(self,H_res_add,iRvec_add,keep_New_R=False)
-        HH_R_a = np.zeros((self.num_wann,self.num_wann,nRvec_add+self.nRvec),dtype=complex)
-        HH_R_a[:,:,:self.nRvec]=HH_R_re1
-        HH_R_a[:,:,self.nRvec:]=HH_R_re2
-        self.nRvec += nRvec_add
-        self.iRvec += iRvec_add
+        if nRvec_add > 0:
+            print('##########################')
+            print('Additional Block')
+            HH_R_re2  =  average_H(self,H_res_add,iRvec_add,keep_New_R=False)
+            HH_R_a = np.zeros((self.num_wann,self.num_wann,nRvec_add+self.nRvec),dtype=complex)
+            HH_R_a[:,:,:self.nRvec]=HH_R_re1
+            HH_R_a[:,:,self.nRvec:]=HH_R_re2
+            self.nRvec += nRvec_add
+            self.iRvec += iRvec_add
+        else:
+            HH_R_a = HH_R_re1
+
         if self.spin:
             HH_R_re = np.zeros((self.num_wann,self.num_wann,self.nRvec),dtype=complex)
             HH_R_re[0:self.num_wann//2,0:self.num_wann//2,:]                     = HH_R_a[0:self.num_wann:2,0:self.num_wann:2,:]
