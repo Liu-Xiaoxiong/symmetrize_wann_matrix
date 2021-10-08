@@ -17,8 +17,9 @@ sw.read_tb()
 sw.read_win()
 sw.findsym()
 sw.symmetrize()
+#sw.symmetrize_vec()
+sw.write_tb()
 sw.write_hr()
-
 kpatha=np.array(
 [[0, 0, 0.5 ],
 [0, 0, 0],
@@ -58,4 +59,3 @@ plt.legend()
 plt.ylim(5,7)
 plt.savefig(seedname+".png") 
 plt.show()
-
