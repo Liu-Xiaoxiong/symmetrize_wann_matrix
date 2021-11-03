@@ -232,7 +232,8 @@ class sym_wann():
         orb_d = [dz2,dxz,dyz,dx2_y2,dxy]
         orb_f = [fz3,fxz2,fyz2,fzx2_zy2,fxyz,fx3_3xy2,f3yx2_y3]
         orb_function_dic={'s':orb_s,'p':orb_p,'d':orb_d,'f':orb_f}
-        orb_chara_dic={'s':[],'p':[z,x,y],'d':[z*z,x*z,y*z,x*x,x*y,y*y],'f':[z*z*z,x*z*z,y*z*z,z*x*x,x*y*z,x*x*x,y*y*y]}
+        orb_chara_dic={'s':[],'p':[z,x,y],'d':[z*z,x*z,y*z,x*x,x*y,y*y],
+                'f':[z*z*z,x*z*z,y*z*z,z*x*x,x*y*z,x*x*x,y*y*y  ,z*y*y,x*y*y,y*x*x]}
         orb_dim = self.orbital_dic[orb_symbol]
         orb_rot_mat = np.zeros((orb_dim,orb_dim),dtype=float)
         xp = np.dot(np.linalg.inv(rot_glb)[0],np.transpose([x,y,z]))
@@ -251,17 +252,22 @@ class sym_wann():
                     orb_rot_mat[j,i] = etmp.subs(OC[j],1).subs(OC[(j+1)%OC_len],0).subs(OC[(j+2)%OC_len],0).evalf()
             elif orb_symbol == 'd':
                 subs = []
-                subs_dic = {0:(subs[0]*sym.sqrt(3.0)).evalf(),
+                for j in range(orb_dim):
+                    etmp = e
+                    subs.append(etmp.subs(OC[j],1).subs(OC[(j+1)%OC_len],0).subs(OC[(j+2)%OC_len],0).subs(OC[(j+3)%OC_len],0).subs(OC[(j+4)%OC_len],0).subs(OC[(j+5)%OC_len],0))
+                subs_dic = {0:(subs[0]*sym.sqrt(3)).evalf(),
                         1:subs[1].evalf(),
                         2:subs[2].evalf(),
                         3:(2*subs[3]+subs[0]).evalf(),
                         4:subs[4].evalf()}
                 for j in range(orb_dim):
-                    etmp = e
-                    subs.append(etmp.subs(OC[j],1).subs(OC[(j+1)%OC_len],0).subs(OC[(j+2)%OC_len],0).subs(OC[(j+3)%OC_len],0).subs(OC[(j+4)%OC_len],0).subs(OC[(j+5)%OC_len],0))
                     orb_rot_mat[j,i] = subs_dic[j]
             elif orb_symbol == 'f':
                 subs = []
+                for j in range(orb_dim):		
+                    etmp = e
+                    subs.append(etmp.subs(OC[j],1).subs(OC[(j+1)%OC_len],0).subs(OC[(j+2)%OC_len],0).subs(OC[(j+3)%OC_len],0).subs(OC[(j+4)%OC_len],0).subs(OC[(j+5)%OC_len],0
+                        ).subs(OC[(j+6)%OC_len],0).subs(OC[(j+7)%OC_len],0).subs(OC[(j+8)%OC_len],0).subs(OC[(j+9)%OC_len],0))
                 subs_dic = {0:(subs[0]*sym.sqrt(15.0)).evalf(),
                         1:(subs[1]*sym.sqrt(10.0)/2).evalf(),
                         2:(subs[2]*sym.sqrt(10.0)/2).evalf(),
@@ -269,9 +275,7 @@ class sym_wann():
                         4:subs[4].evalf(),
                         5:((2*subs[5]+subs[1]/2)*sym.sqrt(6.0)).evalf(),
                         6:((-2*subs[6]-subs[2]/2)*sym.sqrt(6.0)).evalf()}
-                for j in range(orb_dim):		
-                    etmp = e
-                    subs.append(etmp.subs(OC[j],1).subs(OC[(j+1)%OC_len],0).subs(OC[(j+2)%OC_len],0).subs(OC[(j+3)%OC_len],0).subs(OC[(j+4)%OC_len],0).subs(OC[(j+5)%OC_len],0).subs(OC[(j+6)%OC_len],0))
+                for j in range(orb_dim):
                     orb_rot_mat[j,i] = subs_dic[j]
         return orb_rot_mat
 	
@@ -423,14 +427,14 @@ class sym_wann():
                             A_res[:,:,:,0] += tmp0.transpose(0,2,1)
                             A_res[:,:,:,1] += tmp1.transpose(0,2,1)
                             A_res[:,:,:,2] += tmp2.transpose(0,2,1)
-                            #if atom_a ==0 and atom_b == 0:
-                                #test_i = self.iRvec.index([1,1,0])	
-                                #print(self.HH_R[self.H_select[atom_a,atom_b],test_i].reshape(8,8).real)
+                            #if atom_a ==2 and atom_b == 2:
+                            #    test_i = self.iRvec.index([1,1,0])	
+                            #    print(self.HH_R[self.H_select[atom_a,atom_b],test_i].reshape(4,4).real)
                                 #print(self.AA_R[self.H_select[atom_a,atom_b],test_i,2].reshape(8,8).real)
-                                #print('======================')
-                                #print(tmp.transpose(0,2,1)[self.H_select[atom_a,atom_b],test_i].reshape(8,8).real)
+                            #    print('======================')
+                            #    print(tmp.transpose(0,2,1)[self.H_select[atom_a,atom_b],test_i].reshape(4,4).real)
                                 #print(tmp2.transpose(0,2,1)[self.H_select[atom_a,atom_b],test_i].reshape(8,8).real)
-                                #print('======================')
+                            #    print('======================')
 
 
             if keep_New_R:
