@@ -114,7 +114,6 @@ class sym_wann():
             #        self.spin=True
             #    else:
             #        self.spin=False 
-        print('2',self.spin)
         self.lattice = np.array([line.split() for line in win[lattice_op:lattice_ed]],dtype=float)
         self.orbital_dic = {"s":1,"p":3,"d":5,"f":7,"sp3":4,"sp2":3,"l=0":1,"l=1":3,"l=2":5,"l=3":7}	
         projectiondic={}
@@ -130,7 +129,6 @@ class sym_wann():
         self.num_atom = len(self.symbols_in)
         if self.spin: orb_spin = 2
         else: orb_spin = 1
-        print('3',self.spin)
         orbital_index_list=[]
         orb_op=[]
         orb_ed=[]
@@ -141,12 +139,14 @@ class sym_wann():
         orbital_index=0
         for npro in range(pro_op,pro_ed):
             name = win[npro].split(":")[0].split()[0]
-            orb = win[npro].split(":")[1].strip('\n').strip()
+            orb = win[npro].split(":")[1].strip('\n').strip().split(';')
+            print(orb)
             if name in projectiondic.keys():
                 projectiondic[name]=projectiondic[name]+orb			
             else:
                 newdic={name:orb}
                 projectiondic.update(newdic)
+            print(projectiondic)
             for atom in range(self.num_atom):
                 if self.symbols_in[atom] == name:
                     for orb_name in orb:
@@ -211,29 +211,37 @@ class sym_wann():
         x = sym.Symbol('x')
         y = sym.Symbol('y')
         z = sym.Symbol('z')
-        def ss(x,y,z): return 1+0*(x+y+z)
-        def pz(x,y,z): return z
-        def px(x,y,z): return x
-        def py(x,y,z): return y
-        def dz2(x,y,z): return (2*z*z-x*x-y*y)/(2*sym.sqrt(3.0))
-        def dxz(x,y,z): return x*z
-        def dyz(x,y,z): return y*z
-        def dx2_y2(x,y,z): return (x*x-y*y)/2
-        def dxy(x,y,z): return x*y
-        def fz3(x,y,z): return z*(2*z*z-3*x*x-3*y*y)/(2*sym.sqrt(15.0))
-        def fxz2(x,y,z): return x*(4*z*z-x*x-y*y)/(2*sym.sqrt(10.0))
-        def fyz2(x,y,z): return y*(4*z*z-x*x-y*y)/(2*sym.sqrt(10.0))
-        def fzx2_zy2(x,y,z): return z*(x*x-y*y)/2
-        def fxyz(x,y,z): return x*y*z
-        def fx3_3xy2(x,y,z): return x*(x*x-3*y*y)/(2*sym.sqrt(6.0))
-        def f3yx2_y3(x,y,z): return y*(3*x*x-y*y)/(2*sym.sqrt(6.0))
+        ss = lambda x,y,z : 1+0*(x+y+z)
+        px = lambda x,y,z : x
+        py = lambda x,y,z : y
+        pz = lambda x,y,z : z
+        dz2 = lambda x,y,z : (2*z*z-x*x-y*y)/(2*sym.sqrt(3.0))
+        dxz = lambda x,y,z : x*z
+        dyz = lambda x,y,z : y*z
+        dx2_y2 = lambda x,y,z : (x*x-y*y)/2
+        dxy = lambda x,y,z : x*y
+        fz3 = lambda x,y,z : z*(2*z*z-3*x*x-3*y*y)/(2*sym.sqrt(15.0))
+        fxz2 = lambda x,y,z : x*(4*z*z-x*x-y*y)/(2*sym.sqrt(10.0))
+        fyz2 = lambda x,y,z : y*(4*z*z-x*x-y*y)/(2*sym.sqrt(10.0))
+        fzx2_zy2 = lambda x,y,z : z*(x*x-y*y)/2
+        fxyz = lambda x,y,z : x*y*z
+        fx3_3xy2 = lambda x,y,z : x*(x*x-3*y*y)/(2*sym.sqrt(6.0))
+        f3yx2_y3 = lambda x,y,z : y*(3*x*x-y*y)/(2*sym.sqrt(6.0))
+        
+        sp3_1 = lambda x,y,z : 0.5*(1 + x + y + z) 
+        sp3_2 = lambda x,y,z : 0.5*(1 + x - y - z) 
+        sp3_3 = lambda x,y,z : 0.5*(1 - x + y - z) 
+        sp3_4 = lambda x,y,z : 0.5*(1 - x - y + z) 
+
         orb_s = [ss]
         orb_p = [pz,px,py]
         orb_d = [dz2,dxz,dyz,dx2_y2,dxy]
         orb_f = [fz3,fxz2,fyz2,fzx2_zy2,fxyz,fx3_3xy2,f3yx2_y3]
-        orb_function_dic={'s':orb_s,'p':orb_p,'d':orb_d,'f':orb_f}
+        orb_sp3 = [sp3_1,sp3_2,sp3_3,sp3_4]
+        orb_function_dic={'s':orb_s,'p':orb_p,'d':orb_d,'f':orb_f,'sp3':orb_sp3}
         orb_chara_dic={'s':[],'p':[z,x,y],'d':[z*z,x*z,y*z,x*x,x*y,y*y],
-                'f':[z*z*z,x*z*z,y*z*z,z*x*x,x*y*z,x*x*x,y*y*y  ,z*y*y,x*y*y,y*x*x]}
+                'f':[z*z*z,x*z*z,y*z*z,z*x*x,x*y*z,x*x*x,y*y*y  ,z*y*y,x*y*y,y*x*x],
+                'sp3':[x,y,z]}
         orb_dim = self.orbital_dic[orb_symbol]
         orb_rot_mat = np.zeros((orb_dim,orb_dim),dtype=float)
         xp = np.dot(np.linalg.inv(rot_glb)[0],np.transpose([x,y,z]))
@@ -247,12 +255,12 @@ class sym_wann():
             if orb_symbol == 's':
                 orb_rot_mat[0,i] = e.subs(x,0).subs(y,0).subs(z,0).evalf()
             elif orb_symbol == 'p':
-                for j in range(orb_dim):
+                for j in range(3):
                     etmp = e
                     orb_rot_mat[j,i] = etmp.subs(OC[j],1).subs(OC[(j+1)%OC_len],0).subs(OC[(j+2)%OC_len],0).evalf()
             elif orb_symbol == 'd':
                 subs = []
-                for j in range(orb_dim):
+                for j in range(6):
                     etmp = e
                     subs.append(etmp.subs(OC[j],1).subs(OC[(j+1)%OC_len],0).subs(OC[(j+2)%OC_len],0).subs(OC[(j+3)%OC_len],0).subs(OC[(j+4)%OC_len],0).subs(OC[(j+5)%OC_len],0))
                 subs_dic = {0:(subs[0]*sym.sqrt(3)).evalf(),
@@ -264,7 +272,7 @@ class sym_wann():
                     orb_rot_mat[j,i] = subs_dic[j]
             elif orb_symbol == 'f':
                 subs = []
-                for j in range(orb_dim):		
+                for j in range(10):		
                     etmp = e
                     subs.append(etmp.subs(OC[j],1).subs(OC[(j+1)%OC_len],0).subs(OC[(j+2)%OC_len],0).subs(OC[(j+3)%OC_len],0).subs(OC[(j+4)%OC_len],0).subs(OC[(j+5)%OC_len],0
                         ).subs(OC[(j+6)%OC_len],0).subs(OC[(j+7)%OC_len],0).subs(OC[(j+8)%OC_len],0).subs(OC[(j+9)%OC_len],0))
@@ -277,6 +285,19 @@ class sym_wann():
                         6:((-2*subs[6]-subs[2]/2)*sym.sqrt(6.0)).evalf()}
                 for j in range(orb_dim):
                     orb_rot_mat[j,i] = subs_dic[j]
+            elif orb_symbol == 'sp3':
+                subs = []
+                for j in range(3):
+                    etmp = e
+                    subs.append( etmp.subs(OC[j],1).subs(OC[(j+1)%OC_len],0).subs(OC[(j+2)%OC_len],0).evalf() )
+                subs_dic = {0: subs[0]+subs[1]+subs[2] - 1,
+                            1: subs[0]-subs[1]-subs[2] + 1,
+                            2: subs[1]-subs[0]-subs[2] + 1,
+                            3: subs[2]-subs[1]-subs[0] + 1}
+                for j in range(orb_dim):
+                    orb_rot_mat[j,i] = subs_dic[j]/2
+
+
         return orb_rot_mat
 	
     def Part_P(self,rot_sym_glb,orb_symbol):
@@ -427,14 +448,14 @@ class sym_wann():
                             A_res[:,:,:,0] += tmp0.transpose(0,2,1)
                             A_res[:,:,:,1] += tmp1.transpose(0,2,1)
                             A_res[:,:,:,2] += tmp2.transpose(0,2,1)
-                            #if atom_a ==2 and atom_b == 2:
-                            #    test_i = self.iRvec.index([1,1,0])	
-                            #    print(self.HH_R[self.H_select[atom_a,atom_b],test_i].reshape(4,4).real)
+                            if atom_a ==0 and atom_b == 0:
+                                test_i = self.iRvec.index([1,1,0])	
+                                print(self.HH_R[self.H_select[atom_a,atom_b],test_i].reshape(8,8).real)
                                 #print(self.AA_R[self.H_select[atom_a,atom_b],test_i,2].reshape(8,8).real)
-                            #    print('======================')
-                            #    print(tmp.transpose(0,2,1)[self.H_select[atom_a,atom_b],test_i].reshape(4,4).real)
+                                print('======================')
+                                print(tmp.transpose(0,2,1)[self.H_select[atom_a,atom_b],test_i].reshape(8,8).real)
                                 #print(tmp2.transpose(0,2,1)[self.H_select[atom_a,atom_b],test_i].reshape(8,8).real)
-                            #    print('======================')
+                                print('======================')
 
 
             if keep_New_R:
