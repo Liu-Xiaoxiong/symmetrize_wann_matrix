@@ -8,10 +8,11 @@ np.set_printoptions(suppress=True,precision=4,threshold=np.inf,linewidth=500)
 
 
 class sym_wann():
-    def __init__(self,seedname="wannier90",spin=False,TR=False):
+    def __init__(self,seedname="wannier90",spin=False,TR=False,magmom=None):
         self.seedname=seedname
         self.spin=spin
         self.TR=TR
+        self.magmom=magmom
     def read_tb(self):
         f=open(self.seedname+"_tb.dat","r")
         f.readline()
@@ -115,7 +116,8 @@ class sym_wann():
             #    else:
             #        self.spin=False 
         self.lattice = np.array([line.split() for line in win[lattice_op:lattice_ed]],dtype=float)
-        self.orbital_dic = {"s":1,"p":3,"d":5,"f":7,"sp3":4,"sp2":3,"l=0":1,"l=1":3,"l=2":5,"l=3":7}	
+        self.orbital_dic = {"s":1,"p":3,"d":5,"f":7,"sp3":4,"sp2":3,"sp":2,"sp3d":5,"sp3d2":6,
+                            "px":1,"px":1,"pz":1}	
         projectiondic={}
         self.wann_atom_info = []
         self.symbols_in=[]
@@ -161,17 +163,20 @@ class sym_wann():
             if name in projectiondic.keys():
                 projection=projectiondic[name]	
                 num_wann_atom +=1
-                self.wann_atom_info.append((atom+1,self.symbols_in[atom],self.positions_in[atom],projection,orbital_index_list[atom],orb_op[atom],orb_ed[atom]))
+                if self.magmom is None:
+                    self.wann_atom_info.append((atom+1,self.symbols_in[atom],self.positions_in[atom],projection,orbital_index_list[atom],orb_op[atom],orb_ed[atom]))
+                else:
+                    self.wann_atom_info.append((atom+1,self.symbols_in[atom],self.positions_in[atom],projection,orbital_index_list[atom],orb_op[atom],orb_ed[atom],self.magmom[atom]))
         self.num_wann_atom = num_wann_atom
         self.H_select=np.zeros((self.num_wann_atom,self.num_wann_atom,self.num_wann,self.num_wann),dtype=bool)
         for atom_a in range(self.num_wann_atom):
             for atom_b in range(self.num_wann_atom):
                 orb_name_a = self.wann_atom_info[atom_a][3]
                 orb_name_b = self.wann_atom_info[atom_b][3]
-                orb_op_a = self.wann_atom_info[atom_a][-2]
-                orb_op_b = self.wann_atom_info[atom_b][-2]
-                orb_ed_a = self.wann_atom_info[atom_a][-1]
-                orb_ed_b = self.wann_atom_info[atom_b][-1]
+                orb_op_a = self.wann_atom_info[atom_a][5]
+                orb_op_b = self.wann_atom_info[atom_b][5]
+                orb_ed_a = self.wann_atom_info[atom_a][6]
+                orb_ed_b = self.wann_atom_info[atom_b][6]
                 for oa in range(len(orb_name_a)):
                     for ob in range(len(orb_name_b)):
                         self.H_select[atom_a,atom_b,orb_op_a[oa]:orb_ed_a[oa],orb_op_b[ob]:orb_ed_b[ob]]=True
@@ -211,37 +216,66 @@ class sym_wann():
         x = sym.Symbol('x')
         y = sym.Symbol('y')
         z = sym.Symbol('z')
-        ss = lambda x,y,z : 1+0*(x+y+z)
-        px = lambda x,y,z : x
-        py = lambda x,y,z : y
-        pz = lambda x,y,z : z
-        dz2 = lambda x,y,z : (2*z*z-x*x-y*y)/(2*sym.sqrt(3.0))
-        dxz = lambda x,y,z : x*z
-        dyz = lambda x,y,z : y*z
-        dx2_y2 = lambda x,y,z : (x*x-y*y)/2
-        dxy = lambda x,y,z : x*y
-        fz3 = lambda x,y,z : z*(2*z*z-3*x*x-3*y*y)/(2*sym.sqrt(15.0))
-        fxz2 = lambda x,y,z : x*(4*z*z-x*x-y*y)/(2*sym.sqrt(10.0))
-        fyz2 = lambda x,y,z : y*(4*z*z-x*x-y*y)/(2*sym.sqrt(10.0))
-        fzx2_zy2 = lambda x,y,z : z*(x*x-y*y)/2
-        fxyz = lambda x,y,z : x*y*z
-        fx3_3xy2 = lambda x,y,z : x*(x*x-3*y*y)/(2*sym.sqrt(6.0))
-        f3yx2_y3 = lambda x,y,z : y*(3*x*x-y*y)/(2*sym.sqrt(6.0))
-        
-        sp3_1 = lambda x,y,z : 0.5*(1 + x + y + z) 
-        sp3_2 = lambda x,y,z : 0.5*(1 + x - y - z) 
-        sp3_3 = lambda x,y,z : 0.5*(1 - x + y - z) 
-        sp3_4 = lambda x,y,z : 0.5*(1 - x - y + z) 
+        def ss(x,y,z): return 1+0*x
+        def pz(x,y,z): return z
+        def px(x,y,z): return x
+        def py(x,y,z): return y
+        def dz2(x,y,z): return (2*z*z-x*x-y*y)/(2*sym.sqrt(3.0))
+        def dxz(x,y,z): return x*z
+        def dyz(x,y,z): return y*z
+        def dx2_y2(x,y,z): return (x*x-y*y)/2
+        def dxy(x,y,z): return x*y
+        def fz3(x,y,z): return z*(2*z*z-3*x*x-3*y*y)/(2*sym.sqrt(15.0))
+        def fxz2(x,y,z): return x*(4*z*z-x*x-y*y)/(2*sym.sqrt(10.0))
+        def fyz2(x,y,z): return y*(4*z*z-x*x-y*y)/(2*sym.sqrt(10.0))
+        def fzx2_zy2(x,y,z): return z*(x*x-y*y)/2
+        def fxyz(x,y,z): return x*y*z
+        def fx3_3xy2(x,y,z): return x*(x*x-3*y*y)/(2*sym.sqrt(6.0))
+        def f3yx2_y3(x,y,z): return y*(3*x*x-y*y)/(2*sym.sqrt(6.0))
+       
+        def sp_1(x,y,z): return 1/sym.sqrt(2) * (1 + x)
+        def sp_2(x,y,z): return 1/sym.sqrt(2) * (1 - x)
 
-        orb_s = [ss]
-        orb_p = [pz,px,py]
-        orb_d = [dz2,dxz,dyz,dx2_y2,dxy]
-        orb_f = [fz3,fxz2,fyz2,fzx2_zy2,fxyz,fx3_3xy2,f3yx2_y3]
-        orb_sp3 = [sp3_1,sp3_2,sp3_3,sp3_4]
-        orb_function_dic={'s':orb_s,'p':orb_p,'d':orb_d,'f':orb_f,'sp3':orb_sp3}
-        orb_chara_dic={'s':[],'p':[z,x,y],'d':[z*z,x*z,y*z,x*x,x*y,y*y],
+        def sp2_1(x,y,z): return 1/sym.sqrt(3) - 1/sym.sqrt(6)*x + 1/sym.sqrt(2)*y
+        def sp2_2(x,y,z): return 1/sym.sqrt(3) - 1/sym.sqrt(6)*x - 1/sym.sqrt(2)*y
+        def sp2_3(x,y,z): return 1/sym.sqrt(3) + 2/sym.sqrt(6)*x 
+
+        def sp3_1(x,y,z): return 0.5*(1 + x + y + z) 
+        def sp3_2(x,y,z): return 0.5*(1 + x - y - z) 
+        def sp3_3(x,y,z): return 0.5*(1 - x + y - z) 
+        def sp3_4(x,y,z): return 0.5*(1 - x - y + z) 
+
+        def sp3d_1(x,y,z): return 1/sqrt(3)*ss -1/sqrt(6)*px +1/sqrt(2)*py
+        def sp3d_2(x,y,z): return 1/sqrt(3)*ss -1/sqrt(6)*px -1/sqrt(2)*py
+        def sp3d_3(x,y,z): return 1/sqrt(3)*ss +2/sqrt(6)*px
+        def sp3d_4(x,y,z): return 1/sqrt(2)*(pz + dz2) 
+        def sp3d_5(x,y,z): return 1/sqrt(2)*(pz + dz2) 
+        
+        def sp3d2_1(x,y,z): return 1/sqrt(6)*ss -1/sqrt(2)*px - 1/sqrt(12)*dz2 + 0.5*dx2_y2
+        def sp3d2_2(x,y,z): return 1/sqrt(6)*ss +1/sqrt(2)*px - 1/sqrt(12)*dz2 + 0.5*dx2_y2
+        def sp3d2_3(x,y,z): return 1/sqrt(6)*ss -1/sqrt(2)*py - 1/sqrt(12)*dz2 - 0.5*dx2_y2
+        def sp3d2_4(x,y,z): return 1/sqrt(6)*ss +1/sqrt(2)*py - 1/sqrt(12)*dz2 - 0.5*dx2_y2
+        def sp3d2_5(x,y,z): return 1/sqrt(6)*ss -1/sqrt(2)*pz + 1/sqrt(3)*dz2
+        def sp3d2_6(x,y,z): return 1/sqrt(6)*ss +1/sqrt(2)*pz + 1/sqrt(3)*dz2
+
+        orb_function_dic={'s':[ss],
+                          'p': [pz,px,py],
+                          'd':[dz2,dxz,dyz,dx2_y2,dxy],
+                          'f': [fz3,fxz2,fyz2,fzx2_zy2,fxyz,fx3_3xy2,f3yx2_y3],
+                         'sp':[sp_1,sp_2],
+                        'sp2':[sp2_1,sp2_2,sp2_3],
+                        'sp3':[sp3_1,sp3_2,sp3_3,sp3_4],
+                       'sp3d':[sp3d_1,sp3d_2,sp3d_3,sp3d_4,sp3d_5],
+                      'sp3d2':[sp3d2_1,sp3d2_2,sp3d2_3,sp3d2_4,sp3d2_5,sp3d2_6],
+                         'px':[x],
+                         'py':[y],
+                         'pz':[z],
+                      }
+        orb_chara_dic={'s':[x],'p':[z,x,y],'d':[z*z,x*z,y*z,x*x,x*y,y*y],
                 'f':[z*z*z,x*z*z,y*z*z,z*x*x,x*y*z,x*x*x,y*y*y  ,z*y*y,x*y*y,y*x*x],
-                'sp3':[x,y,z]}
+                'sp':[x],'sp2':[x,y],'sp3':[x,y,z],'sp3d2':[x,y,z,z*z,x*x,y*y],
+                'px':[x],'py':[y],'pz':[z]
+                }
         orb_dim = self.orbital_dic[orb_symbol]
         orb_rot_mat = np.zeros((orb_dim,orb_dim),dtype=float)
         xp = np.dot(np.linalg.inv(rot_glb)[0],np.transpose([x,y,z]))
@@ -251,53 +285,52 @@ class sym_wann():
         OC = orb_chara_dic[orb_symbol]
         OC_len = len(OC)
         for i in range(orb_dim):
-            e = (orb_function_dic[orb_symbol][i](xp,yp,zp)).expand()
+            subs = []
+            equation = (orb_function_dic[orb_symbol][i](xp,yp,zp)).expand()
+            #if orb_symbol != 's':
+            for j in range(OC_len):
+                    for j_add in range(OC_len):
+                        if j_add == 0:
+                            eq_tmp = equation.subs(OC[j],1)
+                        else:
+                            eq_tmp = eq_tmp.subs(OC[(j+j_add)%OC_len],0)
+                    subs.append(eq_tmp)
             if orb_symbol == 's':
-                orb_rot_mat[0,i] = e.subs(x,0).subs(y,0).subs(z,0).evalf()
+                orb_rot_mat[0,0] = subs[0].evalf()
             elif orb_symbol == 'p':
-                for j in range(3):
-                    etmp = e
-                    orb_rot_mat[j,i] = etmp.subs(OC[j],1).subs(OC[(j+1)%OC_len],0).subs(OC[(j+2)%OC_len],0).evalf()
+                orb_rot_mat[0,i] = subs[0].evalf()
+                orb_rot_mat[1,i] = subs[1].evalf()
+                orb_rot_mat[2,i] = subs[2].evalf()
             elif orb_symbol == 'd':
-                subs = []
-                for j in range(6):
-                    etmp = e
-                    subs.append(etmp.subs(OC[j],1).subs(OC[(j+1)%OC_len],0).subs(OC[(j+2)%OC_len],0).subs(OC[(j+3)%OC_len],0).subs(OC[(j+4)%OC_len],0).subs(OC[(j+5)%OC_len],0))
-                subs_dic = {0:(subs[0]*sym.sqrt(3)).evalf(),
-                        1:subs[1].evalf(),
-                        2:subs[2].evalf(),
-                        3:(2*subs[3]+subs[0]).evalf(),
-                        4:subs[4].evalf()}
-                for j in range(orb_dim):
-                    orb_rot_mat[j,i] = subs_dic[j]
+                orb_rot_mat[0,i] = (subs[0]*sym.sqrt(3)).evalf()
+                orb_rot_mat[1,i] = subs[1].evalf()
+                orb_rot_mat[2,i] = subs[2].evalf()
+                orb_rot_mat[3,i] = (2*subs[3]+subs[0]).evalf()
+                orb_rot_mat[4,i] = subs[4].evalf()
             elif orb_symbol == 'f':
-                subs = []
-                for j in range(10):		
-                    etmp = e
-                    subs.append(etmp.subs(OC[j],1).subs(OC[(j+1)%OC_len],0).subs(OC[(j+2)%OC_len],0).subs(OC[(j+3)%OC_len],0).subs(OC[(j+4)%OC_len],0).subs(OC[(j+5)%OC_len],0
-                        ).subs(OC[(j+6)%OC_len],0).subs(OC[(j+7)%OC_len],0).subs(OC[(j+8)%OC_len],0).subs(OC[(j+9)%OC_len],0))
-                subs_dic = {0:(subs[0]*sym.sqrt(15.0)).evalf(),
-                        1:(subs[1]*sym.sqrt(10.0)/2).evalf(),
-                        2:(subs[2]*sym.sqrt(10.0)/2).evalf(),
-                        3:(2*subs[3]+3*subs[0]).evalf(),
-                        4:subs[4].evalf(),
-                        5:((2*subs[5]+subs[1]/2)*sym.sqrt(6.0)).evalf(),
-                        6:((-2*subs[6]-subs[2]/2)*sym.sqrt(6.0)).evalf()}
-                for j in range(orb_dim):
-                    orb_rot_mat[j,i] = subs_dic[j]
+                orb_rot_mat[0,i] = (subs[0]*sym.sqrt(15.0)).evalf()
+                orb_rot_mat[1,i] = (subs[1]*sym.sqrt(10.0)/2).evalf()
+                orb_rot_mat[2,i] = (subs[2]*sym.sqrt(10.0)/2).evalf()
+                orb_rot_mat[3,i] = (2*subs[3]+3*subs[0]).evalf()
+                orb_rot_mat[4,i] = subs[4].evalf()
+                orb_rot_mat[5,i] = ((2*subs[5]+subs[1]/2)*sym.sqrt(6.0)).evalf()
+                orb_rot_mat[6,i] = ((-2*subs[6]-subs[2]/2)*sym.sqrt(6.0)).evalf()
+            elif orb_symbol == 'sp':
+                orb_rot_mat[0,i] = 1/sym.sqrt(2)*(1+subs[0]) 
+                orb_rot_mat[1,i] = 1/sym.sqrt(2)*(1-subs[0])
+            elif orb_symbol == 'sp2':
+                orb_rot_mat[0,i] = 1/sym.sqrt(3)-1/sym.sqrt(6)*sub[0]+1/sym.sqrt(2)*sub[1]
+                orb_rot_mat[1,i] = 1/sym.sqrt(3)-1/sym.sqrt(6)*sub[0]-1/sym.sqrt(2)*sub[1]
+                orb_rot_mat[2,i] = 1/sym.sqrt(3)+2/sym.sqrt(6)*sub[0]
             elif orb_symbol == 'sp3':
-                subs = []
-                for j in range(3):
-                    etmp = e
-                    subs.append( etmp.subs(OC[j],1).subs(OC[(j+1)%OC_len],0).subs(OC[(j+2)%OC_len],0).evalf() )
-                subs_dic = {0: subs[0]+subs[1]+subs[2] - 1,
-                            1: subs[0]-subs[1]-subs[2] + 1,
-                            2: subs[1]-subs[0]-subs[2] + 1,
-                            3: subs[2]-subs[1]-subs[0] + 1}
-                for j in range(orb_dim):
-                    orb_rot_mat[j,i] = subs_dic[j]/2
+                orb_rot_mat[0,i] = 0.5*(subs[0]+subs[1]+subs[2] - 1)
+                orb_rot_mat[1,i] = 0.5*(subs[0]-subs[1]-subs[2] + 1)
+                orb_rot_mat[2,i] = 0.5*(subs[1]-subs[0]-subs[2] + 1)
+                orb_rot_mat[3,i] = 0.5*(subs[2]-subs[1]-subs[0] + 1)
+            #elif orb_symbol == 'sp3d':
+            #elif orb_symbol == 'sp3d2':
 
-
+       # print(orb_rot_mat)
         return orb_rot_mat
 	
     def Part_P(self,rot_sym_glb,orb_symbol):
@@ -359,12 +392,26 @@ class sym_wann():
                         assert atom_index != 0,'Error!!!!: no atom can match the new one Rvec = {}, atom_index = {}'.format(self.iRvec[ir],atom_index)
             rot_map.append(match_index)
             vec_shift_map.append(vec_shift)
-        return np.array(rot_map,dtype=int),np.array(vec_shift_map,dtype=int)
+        rot_sym = self.symmetry['rotations'][sym]
+        rot_sym_glb = np.dot(np.dot(np.transpose(self.lattice),rot_sym),np.linalg.inv(np.transpose(self.lattice)) )
+        if self.magmom is not None:
+            for i in range(self.num_wann_atom):
+                magmom = np.round(self.wann_atom_info[i][-1],decimals=4)
+                new_magmom =np.round( np.dot(rot_sym_glb,magmom),decimals=4)
+                if abs(np.linalg.norm(magmom-new_magmom)) > 0.0005:
+                    magsym_break = True
+                    print('Symmetry operator {} is not respect to magnetic moment'.format(sym) )
+                    break
+                else:
+                    magsym_break = False
+        else:
+            magsym_break=False
+        return np.array(rot_map,dtype=int),np.array(vec_shift_map,dtype=int),magsym_break
 
     def full_p_mat(self,atom_index,rot):
         orbitals = self.wann_atom_info[atom_index][3]
-        op = self.wann_atom_info[atom_index][-2]
-        ed = self.wann_atom_info[atom_index][-1]
+        op = self.wann_atom_info[atom_index][5]
+        ed = self.wann_atom_info[atom_index][6]
         p_mat = np.zeros((self.num_wann,self.num_wann),dtype = complex)
         p_mat_dagger = np.zeros((self.num_wann,self.num_wann),dtype = complex)
         rot_sym = self.symmetry['rotations'][rot]
@@ -410,6 +457,7 @@ class sym_wann():
             self.AA_R = self.spin_range(self.AA_R)
         
         def average_H(self,H_res,A_res,iRvec,keep_New_R=True):
+            nrot = self.nsymm
             R_list = np.array(iRvec,dtype=int)
             nRvec=len(R_list)
             tmp_R_list = []
@@ -419,26 +467,29 @@ class sym_wann():
                 p_map_dagger = np.zeros((self.num_wann_atom,self.num_wann,self.num_wann),dtype=complex)
                 for atom in range(self.num_wann_atom):
                     p_map[atom],p_map_dagger[atom] = self.full_p_mat(atom,rot)
-                rot_map,vec_shift = self.atom_rot_map(rot)
-                R_map = np.dot(R_list,np.transpose(self.symmetry['rotations'][rot]))
-                atom_R_map = R_map[:,None,None,:] - vec_shift[None,:,None,:] + vec_shift[None,None,:,:]
-                HH_all = np.zeros((nRvec,self.num_wann_atom,self.num_wann_atom,self.num_wann,self.num_wann),dtype=complex)
-                AA_all = np.zeros((nRvec,self.num_wann_atom,self.num_wann_atom,self.num_wann,self.num_wann,3),dtype=complex)
-                for iR in range(nRvec):
-                    for atom_a in range(self.num_wann_atom):
-                        for atom_b in range(self.num_wann_atom):
-                            new_Rvec=list(atom_R_map[iR,atom_a,atom_b])
-                            if new_Rvec in self.iRvec:
-                                new_Rvec_index = self.iRvec.index(new_Rvec)
-                                HH_all[iR,atom_a,atom_b,self.H_select[atom_a,atom_b]] = self.HH_R[self.H_select[rot_map[atom_a],rot_map[atom_b]],new_Rvec_index]
-                                AA_all[iR,atom_a,atom_b,self.H_select[atom_a,atom_b],:] = self.AA_R[self.H_select[rot_map[atom_a],rot_map[atom_b]],new_Rvec_index,:].dot(np.transpose(self.symmetry['rotations'][rot]) )
-                            else:
-                                if new_Rvec in tmp_R_list:
-                                    pass
+                rot_map,vec_shift,magsym_break = self.atom_rot_map(rot)
+                if magsym_break:
+                    nrot -= 1
+                else:
+                    R_map = np.dot(R_list,np.transpose(self.symmetry['rotations'][rot]))
+                    atom_R_map = R_map[:,None,None,:] - vec_shift[None,:,None,:] + vec_shift[None,None,:,:]
+                    HH_all = np.zeros((nRvec,self.num_wann_atom,self.num_wann_atom,self.num_wann,self.num_wann),dtype=complex)
+                    AA_all = np.zeros((nRvec,self.num_wann_atom,self.num_wann_atom,self.num_wann,self.num_wann,3),dtype=complex)
+                    for iR in range(nRvec):
+                        for atom_a in range(self.num_wann_atom):
+                            for atom_b in range(self.num_wann_atom):
+                                new_Rvec=list(atom_R_map[iR,atom_a,atom_b])
+                                if new_Rvec in self.iRvec:
+                                    new_Rvec_index = self.iRvec.index(new_Rvec)
+                                    HH_all[iR,atom_a,atom_b,self.H_select[atom_a,atom_b]] = self.HH_R[self.H_select[rot_map[atom_a],rot_map[atom_b]],new_Rvec_index]
+                                    AA_all[iR,atom_a,atom_b,self.H_select[atom_a,atom_b],:] = self.AA_R[self.H_select[rot_map[atom_a],rot_map[atom_b]],new_Rvec_index,:].dot(np.transpose(self.symmetry['rotations'][rot]) )
                                 else:
-                                    tmp_R_list.append(new_Rvec)
+                                    if new_Rvec in tmp_R_list:
+                                        pass
+                                    else:
+                                        tmp_R_list.append(new_Rvec)
 
-                for atom_a in range(self.num_wann_atom):
+                    for atom_a in range(self.num_wann_atom):
                         for atom_b in range(self.num_wann_atom):
                             tmp = np.dot(np.dot(p_map_dagger[atom_a],HH_all[:,atom_a,atom_b]),p_map[atom_b])
                             H_res += tmp.transpose(0,2,1)
@@ -448,20 +499,20 @@ class sym_wann():
                             A_res[:,:,:,0] += tmp0.transpose(0,2,1)
                             A_res[:,:,:,1] += tmp1.transpose(0,2,1)
                             A_res[:,:,:,2] += tmp2.transpose(0,2,1)
-                            if atom_a ==0 and atom_b == 0:
-                                test_i = self.iRvec.index([1,1,0])	
-                                print(self.HH_R[self.H_select[atom_a,atom_b],test_i].reshape(8,8).real)
+                            #if atom_a ==0 and atom_b == 0:
+                            #    test_i = self.iRvec.index([1,1,0])	
+                            #    print(self.HH_R[self.H_select[atom_a,atom_b],test_i].reshape(8,8).real)
                                 #print(self.AA_R[self.H_select[atom_a,atom_b],test_i,2].reshape(8,8).real)
-                                print('======================')
-                                print(tmp.transpose(0,2,1)[self.H_select[atom_a,atom_b],test_i].reshape(8,8).real)
+                            #    print('======================')
+                            #    print(tmp.transpose(0,2,1)[self.H_select[atom_a,atom_b],test_i].reshape(8,8).real)
                                 #print(tmp2.transpose(0,2,1)[self.H_select[atom_a,atom_b],test_i].reshape(8,8).real)
-                                print('======================')
+                            #    print('======================')
 
 
             if keep_New_R:
-                    return  H_res/self.nsymm,A_res/self.nsymm , tmp_R_list
+                    return  H_res/nrot,A_res/nrot , tmp_R_list
             else:
-                    return  H_res/self.nsymm,A_res/self.nsymm				
+                    return  H_res/nrot,A_res/nrot			
         
         H_res_exist = np.zeros((self.num_wann,self.num_wann,self.nRvec),dtype=complex)
         A_res_exist = np.zeros((self.num_wann,self.num_wann,self.nRvec,3),dtype=complex)
