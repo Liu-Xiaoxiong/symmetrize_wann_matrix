@@ -1,4 +1,4 @@
-symmetrize_wann_file
+symmetrize_wann_matrix
 --------------------
 This code aimed to symmetrize the wannier90 hr file.
 
