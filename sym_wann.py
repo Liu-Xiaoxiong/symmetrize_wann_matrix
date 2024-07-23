@@ -1,18 +1,18 @@
+import os
+import sys
+import warnings
 import numpy as np
 import spglib
 from sym_wann_orbitals import Orbitals
-from _utility import get_angle
+from _utility import num_cart_dim
+from irrep.spacegroup import SymmetryOperation
+from collections import defaultdict
+from functools import cached_property
+import copy
 
 
-class SymWann():
-
-    default_parameters = {
-            'soc':False,
-            'magmom':None,
-            'DFT_code':'qe',
-            'seedname':'wannier90'}
-
-    __doc__ = """
+class SymWann:
+    """
     Symmetrize wannier matrices in real space: Ham_R, AA_R, BB_R, SS_R,...
 
     Parameters
@@ -25,103 +25,128 @@ class SymWann():
         Positions of each atom.
     atom_name: list
         Name of each atom.
-    proj: list
+    projections: list
         Should be the same with projections card in relative Wannier90.win.
 
         eg: ``['Te: s','Te:p']``
 
         If there is hybrid orbital, grouping the other orbitals.
 
-        eg: ``['Fe':sp3d2;t2g]`` Plese don't use ``['Fe':sp3d2;dxz,dyz,dxy]``
+        eg: ``['Fe':sp3d2;t2g]`` Please don't use ``['Fe':sp3d2;dxz,dyz,dxy]``
 
-            ``['X':sp;p2]`` Plese don't use ``['X':sp;pz,py]``
+            ``['X':sp;p2]`` Please don't use ``['X':sp;pz,py]``
     iRvec: array
         List of R vectors.
     XX_R: dic
         Matrix before symmetrization.
     soc: bool
-        Spin orbital coupling. Default: ``{soc}``
+        Spin orbital coupling.
     magmom: 2D array
-        Magnetic momentom of each atoms. Default ``{magmom}``
+        Magnetic moment of each atom.
     DFT_code: str
-        ``'qe'`` or ``'vasp'``   Default: ``{DFT_code}``
+        ``'qe'`` or ``'vasp'``
         vasp and qe have different orbitals arrangement with SOC.
+    wannier_centers_cart: np.array(num_wann, 3)
+        Wannier centers in cartesian coordinates.
+    use_wcc_phase: bool
+        use wannier centers in phase factor or not. (convention I or II)
+    logile: file
+        Log file. 
 
-    Return
-    ------
-    Dictionary of matrix after symmetrization.
-    Updated list of R vectors.
+    Returns
+    -------
+    dict(str, np.array(num_wann, num_wann, ...), dtype=complex)
+        Symmetrized matrices.
+    np.array((num_wann, 3), dtype=int)
+        New R vectors.
 
-    """.format(**default_parameters)
+    """
 
     def __init__(
             self,
             positions,
             atom_name,
-            proj,
-            **parameters):
+            projections,
+            num_wann: int,
+            lattice,
+            iRvec,
+            XX_R: dict,
+            wannier_centers_cart=None,
+            use_wcc_phase=True,
+            soc=False,
+            magmom=None,
+            DFT_code='qe',
+            rotations=None,
+            translations=None,
+            silent=False,
+    ):
 
-        for param in self.default_parameters:
-            if param in parameters:
-                vars(self)[param] = parameters[param]
-            else:
-                vars(self)[param] = self.default_parameters[param]
-
-
-        f=open(self.seedname+"_tb.dat","r")
-        f.readline()
-        self.lattice=np.array([f.readline().split()[:3] for i in range(3)],dtype=float)
-        self.num_wann=int(f.readline())
-        self.nRvec=int(f.readline())
-        self.Ndegen=[]
-        while len(self.Ndegen)<self.nRvec:
-            self.Ndegen+=f.readline().split()
-        self.Ndegen=np.array(self.Ndegen,dtype=int)
-        self.iRvec=[]
-        self.Ham_R=np.zeros( (self.num_wann,self.num_wann,self.nRvec) ,dtype=complex)
-        for ir in range(self.nRvec):
-            f.readline()
-            self.iRvec.append(list(np.array(f.readline().split()[0:3],dtype=int)))
-            hh=np.array( [[f.readline().split()[2:4]
-                    for n in range(self.num_wann)]
-                        for m in range(self.num_wann)],dtype=float).transpose( (1,0,2) )
-            self.Ham_R[:,:,ir]=(hh[:,:,0]+1j*hh[:,:,1])/self.Ndegen[ir]
-        self.AA_R=np.zeros( (self.num_wann,self.num_wann,self.nRvec,3) ,dtype=complex)
-        for ir in range(self.nRvec):
-            f.readline()
-            assert (np.array(f.readline().split(),dtype=int)==np.array(self.iRvec[ir],dtype=int)).all()
-            aa=np.array( [[f.readline().split()[2:8]
-                        for n in range(self.num_wann)]
-                        for m in range(self.num_wann)],dtype=float)
-            self.AA_R[:,:,ir,:]=(aa[:,:,0::2]+1j*aa[:,:,1::2]).transpose( (1,0,2) )/self.Ndegen[ir]
-        
+        assert (rotations is None) == (translations is None), "rotations and translations should be both None or both not None"
+        assert use_wcc_phase
+        self.soc = soc
+        self.silent = silent
+        logfile = self.logfile
+        self.magmom = magmom
+        self.DFT_code = DFT_code
+        self.wannier_centers_cart = wannier_centers_cart
+        self.iRvec = [tuple(R) for R in iRvec]
+        self.iRvec_index = {r: i for i, r in enumerate(self.iRvec)}
+        self.nRvec = len(self.iRvec)
+        self.num_wann = num_wann
+        self.lattice = lattice
         self.positions = positions
         self.atom_name = atom_name
-        self.proj = proj
-        self.possible_matrix_list = ['AA', 'SS', 'BB', 'CC']  #['AA','BB','CC','SS','SA','SHA','SR','SH','SHR']
-        #self.matrix_list = {k: v for k, v in XX_R.items() if k in self.possible_matrix_list}
-        self.matrix_list = {'AA':self.AA_R}
-        self.parity_I = {
-            'AA': 1,
-            'BB': 1,
-            'CC': -1,
-            'SS': -1
-        }  #{'AA':1,'BB':1,'CC':1,'SS':-1,'SA':1,'SHA':1,'SR':1,'SH':1,'SHR':1}
-        self.parity_TR = {
-            'AA': 1,
-            'BB': 1,
-            'CC': -1,
-            'SS': -1
-        }  #{'AA':1,'BB':1,'CC':1,'SS':-1,'SA':1,'SHA':1,'SR':1,'SH':1,'SHR':1}
-        self.orbitals = Orbitals()
+        possible_matrix_list = ['Ham', 'AA', 'SS', 'BB', 'CC', 'AA', 'BB', 'CC', 'OO', 'GG',
+                                'SS', 'SA', 'SHA', 'SR', 'SH', 'SHR']
+        tested_matrix_list = ['Ham', 'AA', 'SS', 'BB', 'CC', 'AA', 'BB', 'CC',
+                              'SS', 'SH', 'SA', 'SHA']
+        unknown = set(XX_R.keys()) - set(possible_matrix_list)
+        if unknown:
+            raise NotImplementedError(f"symmetrization of matrices {unknown} is not implemented yet")
+        unknown = set(XX_R.keys()) - set(tested_matrix_list)
+        if unknown:
+            warnings.warn(f"symmetrization of matrices {unknown} is not tested. use on your own risk")
+        self.matrix_list = XX_R
 
-        self.wann_atom_info = []
+        # This is confusing, actually the I-odd vectors have "+1" here, because the minus is already in the rotation matrix
+        # but Ham is a scalar, so +1
+        # TODO: change it
+        self.parity_I = {
+            'Ham': 1,
+            'AA': 1,
+            'BB': 1,
+            'CC': -1,
+            'SS': -1,
+            'OO': -1,
+            'GG': 1,
+            'SH': -1,
+            'SA': -1,
+            'SHA': -1,
+            'SR': -1,
+            'SHR': -1,
+        }  #
+        self.parity_TR = {
+            'Ham': 1,
+            'AA': 1,
+            'BB': 1,
+            'CC': -1,
+            'SS': -1,
+            'OO': -1,
+            'GG': 1,
+            'SH': -1,
+            'SA': -1,
+            'SHA': -1,
+            'SR': -1,
+            'SHR': -1,
+        }
+
+        self.orbitals = Orbitals()
 
         num_atom = len(self.atom_name)
 
-        #=============================================================
-        #Generate wannier_atoms_information list and H_select matrices
-        #=============================================================
+        # =============================================================
+        # Generate wannier_atoms_information list and H_select matrices
+        # =============================================================
         '''
         Wannier_atoms_information is a list of informations about atoms which contribute projections orbitals.
         Form: (number [int], name_of_element [str],position [array], orbital_index [list] ,
@@ -132,378 +157,449 @@ class SymWann():
         H_select matrices is bool matrix which can select a subspace of Hamiltonian between one atom and it's
         equivalent atom after symmetry operation.
         '''
-        proj_dic = {}
+        proj_dic = defaultdict(lambda: [])
         orbital_index = 0
-        orbital_index_list = []
-        for i in range(num_atom):
-            orbital_index_list.append([])
-        for iproj in self.proj:
-            name_str = iproj.split(":")[0].split()[0]
-            orb_str = iproj.split(":")[1].strip('\n').strip().split(';')
-            if name_str in proj_dic:
-                proj_dic[name_str] = proj_dic[name_str] + orb_str
-            else:
-                proj_dic[name_str] = orb_str
-            for iatom in range(num_atom):
-                if self.atom_name[iatom] == name_str:
+        orbital_index_list = [[] for _ in range(num_atom)]
+        for proj in projections:
+            name_str = proj.split(":")[0].split()[0]
+            orb_str = proj.split(":")[1].strip('\n').strip().split(';')
+            proj_dic[name_str] += orb_str
+            for iatom, atom_name in enumerate(self.atom_name):
+                if atom_name == name_str:
                     for iorb in orb_str:
-                        num_orb = self.orbitals.num_orbitals[iorb]
+                        num_orb = self.orbitals.num_orbitals(iorb)
                         orb_list = [orbital_index + i for i in range(num_orb)]
                         if self.soc:
-                            orb_list += [orbital_index + i + int(self.num_wann / 2) for i in range(num_orb)]
+                            orb_list += [i + self.num_wann // 2 for i in orb_list]
                         orbital_index += num_orb
                         orbital_index_list[iatom].append(orb_list)
 
         self.wann_atom_info = []
-        self.num_wann_atom = 0
-        for atom in range(num_atom):
-            name = self.atom_name[atom]
+        for atom, name in enumerate(self.atom_name):
             if name in proj_dic:
                 projection = proj_dic[name]
-                self.num_wann_atom += 1
-                orb_position_dic = {}
-                for i in range(len(projection)):
-                    orb_select = np.zeros((self.num_wann, self.num_wann), dtype=bool)
-                    for oi in orbital_index_list[atom][i]:
-                        for oj in orbital_index_list[atom][i]:
-                            orb_select[oi, oj] = True
-                    orb_position_dic[projection[i]] = orb_select
-                if self.magmom is None:
-                    self.wann_atom_info.append(
-                        (
-                            atom + 1, self.atom_name[atom], self.positions[atom], projection, orbital_index_list[atom],
-                            orb_position_dic))
-                else:
-                    self.wann_atom_info.append(
-                        (
-                            atom + 1, self.atom_name[atom], self.positions[atom], projection, orbital_index_list[atom],
-                            self.magmom[atom], orb_position_dic))
+                self.wann_atom_info.append(WannAtomInfo(iatom=atom + 1, atom_name=self.atom_name[atom],
+                                                        position=self.positions[atom], projection=projection,
+                                                        orbital_index=orbital_index_list[atom], soc=self.soc,
+                                                        magmom=self.magmom[atom] if self.magmom is not None else None,
+                                                        logfile=logfile)
+                                                        )
+        self.num_wann_atom = len(self.wann_atom_info)
 
-        self.H_select = np.zeros((self.num_wann_atom, self.num_wann_atom, self.num_wann, self.num_wann), dtype=bool)
-        for atom_a in range(self.num_wann_atom):
-            for atom_b in range(self.num_wann_atom):
-                orb_list_a = self.wann_atom_info[atom_a][4]  #list of orbital index
-                orb_list_b = self.wann_atom_info[atom_b][4]  #...
-                for oa_list in orb_list_a:
-                    for oia in oa_list:
-                        for ob_list in orb_list_b:
-                            for oib in ob_list:
-                                self.H_select[atom_a, atom_b, oia, oib] = True
+        self.H_select = _get_H_select(self.num_wann, self.num_wann_atom, self.wann_atom_info)
+        self.H_select_1b = _get_H_select_1b(self.num_wann, self.num_wann_atom, self.wann_atom_info)
 
-        print('Wannier atoms info')
+        logfile.write('Wannier atoms info\n')
         for item in self.wann_atom_info:
-            print(item[:-1])
+            logfile.write(str(item)+'\n')
+
+        self.matrix_dict_list = {}
+        for k, v1 in XX_R.items():
+            v = np.copy(v1)
+            self.spin_reorder(v)
+            self.matrix_dict_list[k] = _matrix_to_dict(v, self.H_select, self.wann_atom_info)
 
         numbers = []
         names = list(set(self.atom_name))
         for name in self.atom_name:
             numbers.append(names.index(name) + 1)
         cell = (self.lattice, self.positions, numbers)
-        #print(cell)
-        print("[get_spacegroup]")
-        print("  Spacegroup is %s." % spglib.get_spacegroup(cell))
-        self.symmetry = spglib.get_symmetry_dataset(cell)
-        self.nsymm = self.symmetry['rotations'].shape[0]
-        self.rot_c = self.show_symmetry()
-        self.Inv = (self.symmetry['rotations'][1] == -1 * np.eye(3)).all()  #inversion or not
-        if self.Inv:
-            print('====================\nSystem have inversion symmetry\n====================')
+        logfile.write("[get_spacegroup]\n")
+        logfile.write("  Spacegroup is %s.\n" % spglib.get_spacegroup(cell))
+        if rotations is None:
+            dataset = spglib.get_symmetry(cell)
+            rotations = dataset['rotations']
+            translations = dataset['translations']
+        # dataset = spglib.get_symmetry_dataset(cell)
+        all_symmetry_operations = [
+            SymmetryOperation_loc(rot, translations[i], cell[0], ind=i + 1, spinor=self.soc)
+            for i, rot in enumerate(rotations)
+        ]
+        self.nrot = 0
+        self.symmetry_operations = []
+        for symop in all_symmetry_operations:
+            symop.rot_map, symop.vec_shift, symop.sym_only, symop.sym_T = self.atom_rot_map(symop)
+            if symop.sym_T or symop.sym_only:
+                self.symmetry_operations.append(symop)
+                if symop.sym_only:
+                    self.nrot += 1
+                if symop.sym_T:
+                    self.nrot += 1
+                symop.p_mat_atom = []
+                symop.p_mat_atom_dagger = []
+                for atom in range(self.num_wann_atom):
+                    p_mat_, p_mat_dagger_ = self.atom_p_mat(self.wann_atom_info[atom], symop)
+                    symop.p_mat_atom.append(p_mat_)
+                    symop.p_mat_atom_dagger.append(p_mat_dagger_)
+                if symop.sym_T:
+                    symop.p_mat_atom_T = []
+                    symop.p_mat_atom_dagger_T = []
+                    for atom in range(self.num_wann_atom):
+                        ul = self.wann_atom_info[atom].ul
+                        ur = self.wann_atom_info[atom].ur
+                        symop.p_mat_atom_T.append(symop.p_mat_atom[atom].dot(ur))
+                        symop.p_mat_atom_dagger_T.append(ul.dot(symop.p_mat_atom_dagger[atom]))
 
-        if self.soc:
-            if self.DFT_code.lower() == 'vasp':
-                pass
-            elif self.DFT_code.lower() in ['qe', 'quantum_espresso', 'espresso']:
+        self.show_symmetry()
+        has_inv = np.any([(s.inversion and s.angle == 0) for s in self.symmetry_operations])  # has inversion or not
+        if has_inv:
+            logfile.write('====================\nSystem has inversion symmetry\n====================\n')
 
-                def spin_range(Mat_in):
-                    Mat_out = np.zeros(np.shape(Mat_in), dtype=complex)
-                    Mat_out[0:self.num_wann // 2, 0:self.num_wann // 2, :] = Mat_in[0:self.num_wann:2,
-                                                                                    0:self.num_wann:2, :]
-                    Mat_out[self.num_wann // 2:self.num_wann, 0:self.num_wann // 2, :] = Mat_in[1:self.num_wann:2,
-                                                                                                0:self.num_wann:2, :]
-                    Mat_out[0:self.num_wann // 2, self.num_wann // 2:self.num_wann, :] = Mat_in[0:self.num_wann:2,
-                                                                                                1:self.num_wann:2, :]
-                    Mat_out[self.num_wann // 2:self.num_wann,
-                            self.num_wann // 2:self.num_wann, :] = Mat_in[1:self.num_wann:2, 1:self.num_wann:2, :]
-                    return Mat_out
+        for X in self.matrix_list.values():
+            self.spin_reorder(X)
 
-                self.Ham_R = spin_range(self.Ham_R)
-                for X in self.matrix_list:
-                    self.matrix_list[X] = spin_range(self.matrix_list[X])
-            else:
-                raise NotImplementedError("Only work for DFT_code = 'qe' or 'vasp' at this moment")
+    @property
+    def logfile(self):
+        if self.silent:
+            return open(os.devnull, 'w')
+        else:
+            return sys.stdout
 
-    #==============================
-    #Find space group and symmetres
-    #==============================
+
+    # ==============================
+    # Find space group and symmetries
+    # ==============================
+
+
     def show_symmetry(self):
-        rot_c = []
-        for i, (rot, trans) in enumerate(zip(self.symmetry['rotations'], self.symmetry['translations'])):
-            rot_cart = np.dot(np.dot(np.transpose(self.lattice), rot), np.linalg.inv(np.transpose(self.lattice)))
-            trans_cart = np.dot(np.dot(np.transpose(self.lattice), trans), np.linalg.inv(np.transpose(self.lattice)))
-            det = np.linalg.det(rot_cart)
-            rot_c.append(rot_cart)
-            print("  --------------- %4d ---------------" % (i + 1))
-            print(" det = ", det)
-            print("  rotation:                    cart:")
+        logfile = self.logfile
+        for i, symop in enumerate(self.symmetry_operations):
+            rot = symop.rotation
+            trans = symop.translation
+            rot_cart = symop.rotation_cart
+            trans_cart = symop.translation_cart
+            det = symop.det_cart
+            logfile.write("  --------------- %4d ---------------\n" % (i + 1))
+            logfile.write(f" det = {det}\n")
+            logfile.write(f" respected by itself: {symop.sym_only}\n")
+            logfile.write(f" respected with TR: {symop.sym_T}\n")
+            logfile.write("  rotation:                    cart:\n")
             for x in range(3):
-                print(
-                    "     [%2d %2d %2d]                    [%3.2f %3.2f %3.2f]" %
+                logfile.write(
+                    "     [%2d %2d %2d]                    [%3.2f %3.2f %3.2f]\n" %
                     (rot[x, 0], rot[x, 1], rot[x, 2], rot_cart[x, 0], rot_cart[x, 1], rot_cart[x, 2]))
-            print("  translation:")
-            print(
-                "     (%8.5f %8.5f %8.5f)  (%8.5f %8.5f %8.5f)" %
+            logfile.write("  translation:\n")
+            logfile.write(
+                "     (%8.5f %8.5f %8.5f)  (%8.5f %8.5f %8.5f)\n" %
                 (trans[0], trans[1], trans[2], trans_cart[0], trans_cart[1], trans_cart[2]))
-        return rot_c
 
-    def Part_P(self, rot_sym_glb, orb_symbol):
-        '''
-        Rotation matrix of orbitals.
-
-        Without SOC Part_P = rotation matrix of orbital
-        With SOC Part_P = Kronecker product of rotation matrix of orbital and rotation matrix of spin
-        '''
-        if abs(np.dot(np.transpose(rot_sym_glb), rot_sym_glb) - np.eye(3)).sum() > 1.0E-4:
-            print('rot_sym is not orthogomal \n {}'.format(rot_sym_glb))
-        rmat = np.linalg.det(rot_sym_glb) * rot_sym_glb
-        select = np.abs(rmat) < 0.01
-        rmat[select] = 0.0
-        select = rmat > 0.99
-        rmat[select] = 1.0
-        select = rmat < -0.99
-        rmat[select] = -1.0
-        if self.soc:
-            if np.abs(rmat[2, 2]) < 1.0:
-                beta = np.arccos(rmat[2, 2])
-                cos_gamma = -rmat[2, 0] / np.sin(beta)
-                sin_gamma = rmat[2, 1] / np.sin(beta)
-                gamma = get_angle(sin_gamma, cos_gamma)
-                cos_alpha = rmat[0, 2] / np.sin(beta)
-                sin_alpha = rmat[1, 2] / np.sin(beta)
-                alpha = get_angle(sin_alpha, cos_alpha)
-            else:
-                beta = 0.0
-                if rmat[2, 2] == -1.: beta = np.pi
-                gamma = 0.0
-                alpha = np.arccos(rmat[1, 1])
-                if rmat[0, 1] > 0.0: alpha = -1.0 * alpha
-            # euler_angle = np.array([alpha, beta, gamma])
-            dmat = np.zeros((2, 2), dtype=complex)
-            dmat[0, 0] = np.exp(-(alpha + gamma) / 2.0 * 1j) * np.cos(beta / 2.0)
-            dmat[0, 1] = -np.exp(-(alpha - gamma) / 2.0 * 1j) * np.sin(beta / 2.0)
-            dmat[1, 0] = np.exp((alpha - gamma) / 2.0 * 1j) * np.sin(beta / 2.0)
-            dmat[1, 1] = np.exp((alpha + gamma) / 2.0 * 1j) * np.cos(beta / 2.0)
-        rot_orbital = self.orbitals.rot_orb(orb_symbol, rot_sym_glb)
-        if self.soc:
-            rot_orbital = np.kron(dmat, rot_orbital)
-            rot_imag = rot_orbital.imag
-            rot_real = rot_orbital.real
-            rot_orbital = np.array(rot_real + 1j * rot_imag, dtype=complex)
-        return rot_orbital
-
-    def atom_rot_map(self, sym):
-        '''
+    def atom_rot_map(self, symop):
+        """
         rot_map: A map to show which atom is the equivalent atom after rotation operation.
         vec_shift_map: Change of R vector after rotation operation.
-        '''
-        wann_atom_positions = [self.wann_atom_info[i][2] for i in range(self.num_wann_atom)]
+        """
+        logfile = self.logfile
+        wann_atom_positions = [self.wann_atom_info[i].position for i in range(self.num_wann_atom)]
         rot_map = []
         vec_shift_map = []
         for atomran in range(self.num_wann_atom):
             atom_position = np.array(wann_atom_positions[atomran])
-            new_atom = np.dot(self.symmetry['rotations'][sym], atom_position) + self.symmetry['translations'][sym]
+            new_atom = np.dot(symop.rotation, atom_position) + symop.translation
             for atom_index in range(self.num_wann_atom):
                 old_atom = np.array(wann_atom_positions[atom_index])
                 diff = np.array(new_atom - old_atom)
                 if np.all(abs((diff + 0.5) % 1 - 0.5) < 1e-5):
-                    match_index = atom_index
-                    vec_shift = np.array(
-                        np.round(new_atom - np.array(wann_atom_positions[match_index]), decimals=2), dtype=int)
+                    rot_map.append(atom_index)
+                    vec_shift_map.append(np.array(
+                        np.round(new_atom - np.array(wann_atom_positions[atom_index])), dtype=int))
+                    break
                 else:
                     if atom_index == self.num_wann_atom - 1:
-                        assert atom_index != 0, (
-                            f'Error!!!!: no atom can match the new atom after symmetry operation {sym+1},\n'
-                            + f'Before operation: atom {atomran} = {atom_position},\n'
-                            + f'After operation: {atom_position},\nAll wann_atom: {wann_atom_positions}')
-            rot_map.append(match_index)
-            vec_shift_map.append(vec_shift)
-        #Check if the symmetry operator respect magnetic moment.
-        #TODO opt magnet code
-        rot_sym = self.symmetry['rotations'][sym]
-        rot_sym_glb = np.dot(np.dot(np.transpose(self.lattice), rot_sym), np.linalg.inv(np.transpose(self.lattice)))
+                        raise RuntimeError(
+                            f'Error!!!!: no atom can match the new atom after symmetry operation {symop.ind},\n' +
+                            f'Before operation: atom {atomran} = {atom_position},\n' +
+                            f'After operation: {atom_position},\nAll wann_atom: {wann_atom_positions}')
+        # Check if the symmetry operator respect magnetic moment.
+        # TODO opt magnet code
         if self.soc:
+            sym_only = True
+            sym_T = True
             if self.magmom is not None:
-                sym_only_cont = 0
-                sym_T_cont = 0
                 for i in range(self.num_wann_atom):
-                    magmom = np.round(self.wann_atom_info[i][-2], decimals=4)
-                    new_magmom = np.round(np.dot(rot_sym_glb, magmom), decimals=4)
-                    if abs(np.linalg.norm(magmom - np.linalg.det(rot_sym_glb) * new_magmom)) < 0.0005:
-                        sym_only_cont += 1
-                    if abs(np.linalg.norm(magmom + np.linalg.det(rot_sym_glb) * new_magmom)) < 0.0005:
-                        sym_T_cont += 1
-                if sym_only_cont == self.positions.shape[0]:
-                    sym_only = True
-                    print('Symmetry operator {} respect magnetic moment'.format(sym + 1))
-                else:
-                    sym_only = False
-                if sym_T_cont == self.positions.shape[0]:
-                    sym_T = True
-                    print('Symmetry operator {}*T respect magnetic moment'.format(sym + 1))
-                else:
-                    sym_T = False
-            else:
-                sym_only = True
-                sym_T = True
+                    if sym_only or sym_T:
+                        magmom = self.wann_atom_info[i].magmom
+                        new_magmom = np.dot(symop.rotation_cart, magmom) * (-1 if symop.inversion else 1)
+                        if abs(np.linalg.norm(magmom - new_magmom)) > 0.0005:
+                            sym_only = False
+                        if abs(np.linalg.norm(magmom + new_magmom)) > 0.0005:
+                            sym_T = False
+                if sym_only:
+                    logfile.write(f'Symmetry operator {symop.ind} respects magnetic moment')
+                if sym_T:
+                    logfile.write(f'Symmetry operator {symop.ind}*T respects magnetic moment')
         else:
             sym_only = True
             sym_T = False
-
         return np.array(rot_map, dtype=int), np.array(vec_shift_map, dtype=int), sym_only, sym_T
 
-    def full_p_mat(self, atom_index, rot):
-        '''
-        Combianing rotation matrix of Hamiltonian per orbital_quantum_number into per atom.  (num_wann,num_wann)
-        '''
-        orbitals = self.wann_atom_info[atom_index][3]
-        orb_position_dic = self.wann_atom_info[atom_index][-1]
-        p_mat = np.zeros((self.num_wann, self.num_wann), dtype=complex)
-        p_mat_dagger = np.zeros((self.num_wann, self.num_wann), dtype=complex)
-        rot_sym = self.symmetry['rotations'][rot]
-        rot_sym_glb = np.dot(np.dot(np.transpose(self.lattice), rot_sym), np.linalg.inv(np.transpose(self.lattice)))
-        for orb in range(len(orbitals)):
-            orb_name = orbitals[orb]
-            tmp = self.Part_P(rot_sym_glb, orb_name)
+    def atom_p_mat(self, atom_info, symop):
+        """
+        Combining rotation matrix of Hamiltonian per orbital_quantum_number into per atom.  (num_wann,num_wann)
+        """
+        orbitals = atom_info.projection
+        orb_position_dic = atom_info.orb_position_on_atom_dic
+        num_wann_on_atom = atom_info.num_wann
+        p_mat = np.zeros((num_wann_on_atom, num_wann_on_atom), dtype=complex)
+        p_mat_dagger = np.zeros(p_mat.shape, dtype=complex)
+        for orb_name in orbitals:
+            rot_orbital = self.orbitals.rot_orb(orb_name, symop.rotation_cart)
+            if self.soc:
+                rot_orbital = np.kron(symop.spinor_rotation, rot_orbital)
             orb_position = orb_position_dic[orb_name]
-            p_mat[orb_position] = tmp.flatten()
-            p_mat_dagger[orb_position] = np.conj(np.transpose(tmp)).flatten()
+            p_mat[orb_position] = rot_orbital.flatten()
+            p_mat_dagger[orb_position] = np.conj(np.transpose(rot_orbital)).flatten()
         return p_mat, p_mat_dagger
 
-    def average_H(self, iRvec):
-        #If we can make if faster, respectively is the better choice. Because XX_all matrix are supper large.(eat memory)
-        nrot = 0
-        R_list = np.array(iRvec, dtype=int)
-        nRvec = len(R_list)
-        tmp_R_list = []
-        Ham_res = np.zeros((self.num_wann, self.num_wann, nRvec), dtype=complex)
+    def average_WCC(self):
+        WCC_in = np.zeros((self.num_wann, self.num_wann, 3), dtype=complex)
+        WCC_in[np.arange(self.num_wann), np.arange(self.num_wann), :] = self.wannier_centers_cart
+        self.spin_reorder(WCC_in)
+        WCC_out = np.zeros((self.num_wann, self.num_wann, 3), dtype=complex)
 
-        matrix_list_res = {
-            k: np.zeros((self.num_wann, self.num_wann, nRvec, 3), dtype=complex)
-            for k in self.matrix_list
-        }
-        # print (f"iRvec ({nRvec}):\n  {self.iRvec}")
+        for irot, symop in enumerate(self.symmetry_operations):
+            # logfile.write('irot = ', irot + 1)
+            # TODO try numba
+            for atom_a in range(self.num_wann_atom):
+                num_w_a = self.wann_atom_info[atom_a].num_wann  # number of orbitals of atom_a
+                shape = (num_w_a, num_w_a, 3)
+                shape_flat = (num_w_a * num_w_a, 3)
+                # X_L: only rotation wannier centres from L to L' before rotating orbitals.
+                XX_L = WCC_in[self.H_select[symop.rot_map[atom_a], symop.rot_map[atom_a]]].reshape(shape)
+                v_tmp = (symop.vec_shift[atom_a] - symop.translation).dot(self.lattice)
+                for i in range(self.wann_atom_info[atom_a].num_wann):
+                    XX_L[i, i, :] += v_tmp
+                WCC_out[self.H_select[atom_a, atom_a]] += self._rotate_XX_L(
+                    XX_L, 'AA', symop, atom_a, atom_a, mode="sum").reshape(shape_flat)
+        WCC_out /= self.nrot
+        self.spin_reorder(WCC_out, back=True)
+        return WCC_out.diagonal().T.real
 
-        for rot in range(self.nsymm):
-            # rot_cart = np.dot(
-            #     np.dot(np.transpose(self.lattice), self.symmetry['rotations'][rot]),
-            #     np.linalg.inv(np.transpose(self.lattice)))
-            rot_map, vec_shift, sym_only, sym_T = self.atom_rot_map(rot)
-            if sym_only + sym_T == 0:
-                pass
-            else:
-                print('rot = ', rot + 1)
-                if sym_only: nrot += 1
-                if sym_T: nrot += 1
-                p_map = np.zeros((self.num_wann_atom, self.num_wann, self.num_wann), dtype=complex)
-                p_map_dagger = np.zeros((self.num_wann_atom, self.num_wann, self.num_wann), dtype=complex)
-                for atom in range(self.num_wann_atom):
-                    p_map[atom], p_map_dagger[atom] = self.full_p_mat(atom, rot)
-                R_map = np.dot(R_list, np.transpose(self.symmetry['rotations'][rot]))
-                atom_R_map = R_map[:, None, None, :] - vec_shift[None, :, None, :] + vec_shift[None, None, :, :]
-                Ham_all = np.zeros(
-                    (nRvec, self.num_wann_atom, self.num_wann_atom, self.num_wann, self.num_wann), dtype=complex)
-                matrix_list_all = {
-                    X: np.zeros(
-                        (nRvec, self.num_wann_atom, self.num_wann_atom, self.num_wann, self.num_wann, 3), dtype=complex)
-                    for X in self.matrix_list
-                }
+    def index_R(self, R):
+        try:
+            return self.iRvec_index[tuple(R)]
+        except KeyError:
+            return None
 
-                #TODO try numba
-                for iR in range(nRvec):
-                    for atom_a in range(self.num_wann_atom):
-                        num_w_a = len(sum(self.wann_atom_info[atom_a][4], []))  #number of orbitals of atom_a
-                        for atom_b in range(self.num_wann_atom):
-                            new_Rvec = list(atom_R_map[iR, atom_a, atom_b])
-                            if new_Rvec in self.iRvec:
-                                new_Rvec_index = self.iRvec.index(new_Rvec)
-                                Ham_all[iR, atom_a, atom_b,
-                                        self.H_select[atom_a, atom_b]] = self.Ham_R[self.H_select[rot_map[atom_a],
-                                                                                                  rot_map[atom_b]],
-                                                                                    new_Rvec_index]
 
-                                for X in self.matrix_list:
-                                    if X in ['AA', 'BB', 'SS', 'CC', 'FF']:
-                                        num_w_a = len(
-                                            sum(self.wann_atom_info[atom_a][4], []))  #number of orbitals of atom_a
-                                        num_w_b = len(
-                                            sum(self.wann_atom_info[atom_b][4], []))  #number of orbitals of atom_b
-                                        #X_L: only rotation wannier centres from L to L' before rotating orbitals.
-                                        XX_L = self.matrix_list[X][self.H_select[rot_map[atom_a], rot_map[atom_b]],
-                                                                   new_Rvec_index, :].reshape(num_w_a, num_w_b, 3)
-                                        #special even with R == [0,0,0] diagonal terms.
-                                        if iR == self.iRvec.index([0, 0, 0]) and atom_a == atom_b:
-                                            if X == 'AA' and atom_a == atom_b:
-                                                XX_L += np.einsum(
-                                                    'mn,p->mnp', np.eye(num_w_a),
-                                                    (vec_shift[atom_a] - self.symmetry['translations'][rot]).dot(
-                                                        self.lattice))
-                                            elif X == 'BB' and atom_a == atom_b:
-                                                XX_L += (
-                                                    np.einsum('mn,p->mnp', np.eye(num_w_a),
-                                                    (vec_shift[atom_a] - self.symmetry['translations'][rot]).dot(
-                                                        self.lattice))
-                                                    *self.Ham_R[self.H_select[rot_map[atom_a], rot_map[atom_b]],
-                                                        new_Rvec_index].reshape(num_w_a, num_w_b)[:, :, None])
-                                        #X_all: rotating vector.
-                                        matrix_list_all[X][iR, atom_a, atom_b,
-                                                           self.H_select[atom_a, atom_b], :] = np.einsum(
-                                                               'ij,nmi->nmj', self.rot_c[rot], XX_L).reshape(-1, 3)
-                                    else:
-                                        print(f"WARNING: Symmetrization of {X} is not implemented")
-                            else:
-                                if new_Rvec in tmp_R_list:
-                                    pass
-                                else:
-                                    tmp_R_list.append(new_Rvec)
+    def spin_reorder(self, Mat_in, back=False):
+        """ rearranges the spins of the Wannier functions
+            back=False : from interlacing spins to spin blocks
+            back=True : from spin blocks to interlacing spins
+        """
+        if not self.soc:
+            return
+        elif self.DFT_code.lower() == 'vasp':
+            return
+        elif self.DFT_code.lower() in ['qe', 'quantum_espresso', 'espresso']:
+            Mat_out = np.zeros(np.shape(Mat_in), dtype=complex)
+            nw2 = self.num_wann // 2
+            for i in 0, 1:
+                for j in 0, 1:
+                    if back:
+                        Mat_out[i:self.num_wann:2, j:self.num_wann:2, ...] = \
+                            Mat_in[i * nw2:(i + 1) * nw2, j * nw2:(j + 1) * nw2, ...]
+                    else:
+                        Mat_out[i * nw2:(i + 1) * nw2, j * nw2:(j + 1) * nw2, ...] = \
+                            Mat_in[i:self.num_wann:2, j:self.num_wann:2, ...]
+            Mat_in[...] = Mat_out[...]
+            return
+        else:
+            raise ValueError(f"does not work for DFT_code  '{self.DFT_code}' so far")
 
-                for atom_a in range(self.num_wann_atom):
-                    for atom_b in range(self.num_wann_atom):
-                        '''
-                        H_ab_sym = P_dagger_a dot H_ab dot P_b
-                        H_ab_sym_T = ul dot H_ab_sym.conj() dot ur
-                        '''
-                        tmp = np.dot(np.dot(p_map_dagger[atom_a], Ham_all[:, atom_a, atom_b]), p_map[atom_b])
-                        if sym_only:
-                            Ham_res += tmp.transpose(0, 2, 1)
+    def find_irreducible_Rab(self):
+        """
+        Finds which Rvectors can be chosen as an irreducible set for each pair (a,b)
 
-                        if sym_T:
-                            tmp_T = self.ul.dot(tmp.transpose(1, 0, 2)).dot(self.ur).conj()
-                            Ham_res += tmp_T.transpose(0, 2, 1)
+        Return
+        --------
+        dict { (a,b):set([index of Rvecotr, if it is irreducible])}
+        """
+        logfile = self.logfile
+        logfile.write("searching irreducible Rvectors for pairs of a,b\n")
 
-                        for X in self.matrix_list:  # vector matrix
-                            X_shift = matrix_list_all[X].transpose(0, 1, 2, 5, 3, 4)
-                            tmpX = np.dot(np.dot(p_map_dagger[atom_a], X_shift[:, atom_a, atom_b]), p_map[atom_b])
-                            if np.linalg.det(self.symmetry['rotations'][rot]) < 0:
-                                parity_I = self.parity_I[X]
-                            else:
-                                parity_I = 1
-                            if sym_only:
-                                matrix_list_res[X] += tmpX.transpose(0, 3, 1, 2) * parity_I
-                            if sym_T:
-                                tmpX_T = self.ul.dot(tmpX.transpose(1, 2, 0, 3)).dot(self.ur).conj()
-                                matrix_list_res[X] += tmpX_T.transpose(0, 3, 1, 2) * parity_I * self.parity_TR[X]
+        R_list = np.array(self.iRvec, dtype=int)
+        irreducible = np.ones((self.nRvec, self.num_wann_atom, self.num_wann_atom), dtype=bool)
 
-        for k in matrix_list_res:
-            matrix_list_res[k] /= nrot
-        res_dic = matrix_list_res
-        res_dic['Ham'] = Ham_res / nrot
+        for a in range(self.num_wann_atom):
+            for b in range(self.num_wann_atom):
+                for symop in self.symmetry_operations:
+                    if symop.sym_only or symop.sym_T:
+                        a1 = symop.rot_map[a]
+                        b1 = symop.rot_map[b]
+                        if (a1, b1) >= (a, b):
+                            R_map = np.dot(R_list, np.transpose(symop.rotation))
+                            atom_R_map = (R_map[:, None, None, :] -
+                                          symop.vec_shift[None, :, None, :] + symop.vec_shift[None, None, :, :])
+                            for iR in range(self.nRvec):
+                                if irreducible[iR, a, b]:
+                                    iR1 = self.index_R(atom_R_map[iR, a, b])
+                                    if iR1 is not None and (a1, b1, iR1) > (a, b, iR):
+                                        irreducible[iR1, a1, b1] = False
 
-        print('number of symmetry oprations == ', nrot)
+        logfile.write(
+            f"Found {np.sum(irreducible)} sets of (R,a,b) out of the total {self.nRvec * self.num_wann_atom ** 2} ({self.nRvec}*{self.num_wann_atom}^2)\n")
+        dic = {(a, b): set([iR for iR in range(self.nRvec) if irreducible[iR, a, b]])
+               for a in range(self.num_wann_atom) for b in range(self.num_wann_atom)}
+        res = {k: v for k, v in dic.items() if len(v) > 0}
+        return res
 
-        return res_dic, tmp_R_list
+    def average_H_irreducible(self, iRab_new, matrix_dict_in, iRvec_new, mode):
+        """
+        Return
+        --------
+            (matrix_dict_list_res, iRab_all)
+            matrix_dict_list_res : dict
+                {"Ham":{ (a,b):{iR:mat} }, "AA":{...}, ...} , where iR is the index of R-vector in the old set of R-vectors
+        """
+        assert mode in ["sum", "single"]
+        iRab_new = copy.deepcopy(iRab_new)
+        iRvec_new_array = np.array(iRvec_new, dtype=int)
+
+        matrix_dict_list_res = {k: defaultdict(lambda: defaultdict(lambda: 0)) for k, v in
+                                self.matrix_dict_list.items()}
+
+        iRab_all = defaultdict(lambda: set())
+        logfile = self.logfile
+        for symop in self.symmetry_operations:
+            if symop.sym_only or symop.sym_T:
+                logfile.write(f"symmetry operation  {symop.ind}\n")
+
+                R_map = np.dot(iRvec_new_array, np.transpose(symop.rotation))
+                atom_R_map = (R_map[:, None, None, :] -
+                              symop.vec_shift[None, :, None, :] + symop.vec_shift[None, None, :, :])
+                for (atom_a, atom_b), iR_new_list in iRab_new.items():
+                    exclude_set = set()
+                    for iR in iR_new_list:
+                        new_Rvec = tuple(atom_R_map[iR, atom_a, atom_b])
+                        iRab_all[(symop.rot_map[atom_a], symop.rot_map[atom_b])].add(new_Rvec)
+                        if new_Rvec in self.iRvec:
+                            new_Rvec_index = self.index_R(new_Rvec)
+                            for X in matrix_dict_list_res:
+                                if new_Rvec_index in matrix_dict_in[X][(symop.rot_map[atom_a], symop.rot_map[atom_b])]:
+                                    if mode == "single":
+                                        exclude_set.add(iR)
+                                    # X_L: only rotation wannier centres from L to L' before rotating orbitals.
+                                    XX_L = matrix_dict_in[X][(symop.rot_map[atom_a], symop.rot_map[atom_b])][
+                                        new_Rvec_index]
+                                    matrix_dict_list_res[X][(atom_a, atom_b)][iR] += self._rotate_XX_L(
+                                        XX_L, X, symop, atom_a, atom_b, mode=mode
+                                    )
+                    # in single mode we need to determine it only once
+                    if mode == "single":
+                        iR_new_list -= exclude_set
+
+        if mode == "single":
+            for (atom_a, atom_b), iR_new_list in iRab_new.items():
+                assert len(
+                    iR_new_list) == 0, f"for atoms ({atom_a},{atom_b}) some R vectors were not set : {iR_new_list}" + ", ".join(
+                    str(iRvec_new[ir]) for ir in iR_new_list)
+
+        if mode == "sum":
+            for x in matrix_dict_list_res.values():
+                for d in x.values():
+                    for k, v in d.items():
+                        v /= self.nrot
+        return matrix_dict_list_res, iRab_all
+
+    def _rotate_XX_L(self, XX_L: np.ndarray, X: str,
+                     symop, atom_a, atom_b, mode="sum"):
+        """
+        H_ab_sym = P_dagger_a dot H_ab dot P_b
+        H_ab_sym_T = ul dot H_ab_sym.conj() dot ur
+        """
+        n_cart = num_cart_dim(X)  # number of cartesian indices
+        for i in range(n_cart):
+            # every np.tensordot rotates the first dimension and puts it last. So, repeateing this procedure
+            # n_cart times puts dimensions on the right place
+            XX_L = np.tensordot(XX_L, symop.rotation_cart, axes=((-n_cart,), (0,)))
+        if symop.inversion:
+            XX_L *= self.parity_I[X]
+        result = 0
+        if symop.sym_only:
+            result += _rotate_matrix(XX_L, symop.p_mat_atom_dagger[atom_a], symop.p_mat_atom[atom_b])
+        if symop.sym_T and (mode == "sum" or not symop.sym_only):
+            # in "single" mode we need only one operation to restore the value at the ne R-vector
+            result += _rotate_matrix(XX_L, symop.p_mat_atom_dagger_T[atom_a], symop.p_mat_atom_T[atom_b]
+                                     ).conj() * self.parity_TR[X]
+        return result
 
     def symmetrize(self):
-        #====Time Reversal====
-        #syl: (sigma_y)^T *1j, syr: sigma_y*1j
+        """
+        Symmetrize wannier matrices in real space: Ham_R, AA_R, BB_R, SS_R,...
+        and also WCC, and find the new R vectors
+
+        Returns
+        --------
+        dict {str: np.array(num_wann, num_wann, ...), dtype=complex}
+            Symmetrized matrices.
+        np.array((num_wann, 3), dtype=int)
+            New R vectors.
+        np.array((num_wann, 3), dtype=float)
+            Wannier centers in cartesian coordinates.
+        """
+
+
+        # ========================================================
+        # symmetrize existing R vectors and find additional R vectors
+        # ========================================================
+        logfile = self.logfile
+        logfile.write('##########################\n')
+        logfile.write('Symmetrizing Started\n')
+        iRab_irred = self.find_irreducible_Rab()
+        matrix_dict_list_res, iRvec_ab_all = self.average_H_irreducible(iRab_new=iRab_irred,
+                                                                        matrix_dict_in=self.matrix_dict_list,
+                                                                        iRvec_new=self.iRvec, mode="sum")
+        logfile.write('~~~~~Additional R vectors~~~~~~\n')
+        iRvec_new_set = set.union(*iRvec_ab_all.values())
+        iRvec_new_set.add((0, 0, 0))
+        iRvec_new = list(iRvec_new_set)
+        nRvec_new = len(iRvec_new)
+        iRvec_new_index = {r: i for i, r in enumerate(iRvec_new)}
+        iRab_new = {k: set([iRvec_new_index[irvec] for irvec in v]) for k, v in iRvec_ab_all.items()}
+        matrix_dict_list_res, iRab_all_2 = self.average_H_irreducible(iRab_new=iRab_new,
+                                                                      matrix_dict_in=matrix_dict_list_res,
+                                                                      iRvec_new=iRvec_new, mode="single")
+
+        return_dic = {}
+        for k, v in matrix_dict_list_res.items():
+            return_dic[k] = _dict_to_matrix(v, H_select=self.H_select, nRvec=nRvec_new, ndimv=num_cart_dim(k))
+            self.spin_reorder(return_dic[k], back=True)
+
+        logfile.write('Symmetrizing Finished\n')
+
+        wcc = self.average_WCC()
+        return return_dic, np.array(iRvec_new), wcc
+
+
+
+class WannAtomInfo():
+
+    def __init__(self, iatom, atom_name, position, projection, orbital_index, magmom=None, soc=False,
+                 logfile=sys.stdout):
+        self.iatom = iatom
+        self.atom_name = atom_name
+        self.position = position
+        self.projection = projection
+        self.orbital_index = orbital_index
+        #        self.orb_position_dic = orb_position_dic
+        self.magmom = magmom
+        self.soc = soc
+        self.num_wann = len(sum(self.orbital_index, []))  # number of orbitals of atom_a
+        allindex = sorted(sum(self.orbital_index, []))
+    #    logfile.write(f"Atom {iatom}\n")
+    #    logfile.write(f"Allindex {allindex}\n")
+        self.orb_position_on_atom_dic = {}
+        for pr, ind in zip(projection, orbital_index):
+            indx = [allindex.index(i) for i in ind]
+    #        logfile.write(f"{pr} : {ind} : {indx}\n")
+            orb_select = np.zeros((self.num_wann, self.num_wann), dtype=bool)
+            for oi in indx:
+                for oj in indx:
+                    orb_select[oi, oj] = True
+            self.orb_position_on_atom_dic[pr] = orb_select
+
+        # ====Time Reversal====
+        # syl: (sigma_y)^T *1j, syr: sigma_y*1j
         if self.soc:
             base_m = np.eye(self.num_wann // 2)
             syl = np.array([[0.0, -1.0], [1.0, 0.0]])
@@ -511,100 +607,126 @@ class SymWann():
             self.ul = np.kron(syl, base_m)
             self.ur = np.kron(syr, base_m)
 
-        #========================================================
-        #symmetrize exist R vectors and find additional R vectors
-        #========================================================
-        print('##########################')
-        print('Symmetrizing Start')
-        return_dic, iRvec_add = self.average_H(self.iRvec)
-        nRvec_add = len(iRvec_add)
-        print('nRvec_add =', nRvec_add)
-        if nRvec_add > 0:
-            return_dic_add, iRvec_add_0 = self.average_H(iRvec_add)
-            for X in return_dic_add.keys():
-                return_dic[X] = np.concatenate((return_dic[X], return_dic_add[X]), axis=2)
-
-        if self.soc:
-            if self.DFT_code.lower() == 'vasp':
-                pass
-            elif self.DFT_code.lower() in ['qe', 'quantum_espresso', 'espresso']:
-
-                def spin_range_back(Mat_in):
-                    Mat_out = np.zeros(np.shape(Mat_in), dtype=complex)
-                    Mat_out[0:self.num_wann:2,0:self.num_wann:2, :] = Mat_in[0:self.num_wann // 2,
-                                                                                0:self.num_wann // 2, :]
-                    Mat_out[1:self.num_wann:2,0:self.num_wann:2, :] = Mat_in[self.num_wann // 2:self.num_wann,
-                                                                                0:self.num_wann // 2, :]
-                    Mat_out[0:self.num_wann:2,1:self.num_wann:2, :] = Mat_in[0:self.num_wann // 2,
-                                                                                self.num_wann // 2:self.num_wann, :]
-                    Mat_out[1:self.num_wann:2, 1:self.num_wann:2, :] = Mat_in[
-                                                self.num_wann // 2:self.num_wann,self.num_wann // 2:self.num_wann, :]
-                    return Mat_out
-
-                return_dic['Ham'] = spin_range_back(return_dic['Ham'])
-                for X in self.matrix_list:
-                    return_dic[X] = spin_range_back(return_dic[X])
-
-        print('Symmetrizing Finished')
-        
-        self.write_hr(return_dic['Ham'])
-        self.write_tb(return_dic['Ham'],return_dic['AA'])
-        
-        return return_dic, np.array(self.iRvec + iRvec_add)
-    
-    def write_hr(self, Ham_R):
-        name=self.seedname+"_sym_hr.dat"
-        ndegen=list(np.ones((self.nRvec),dtype=int))
-        with open(name,"w") as f:
-            f.write("symmetrize wannier hr\n"+str(self.num_wann)+"\n"+str(self.nRvec)+"\n")
-            nl = np.int32(np.ceil(self.nRvec/15.0))
-            for l in range(nl):
-                line="    "+'    '.join([str(np.int32(i)) for i in ndegen[l*15:(l+1)*15]])
-                f.write(line+"\n")
-            whh_r = np.round(Ham_R,decimals=6)
-            for ir in range(self.nRvec):
-                rx = int(self.iRvec[ir][0]);ry = int(self.iRvec[ir][1]);rz = int(self.iRvec[ir][2])
-                for n in range(self.num_wann):
-                    for m in range(self.num_wann):
-                        rp =whh_r[m,n,ir].real
-                        ip =whh_r[m,n,ir].imag
-                        line="{:5d}{:5d}{:5d}{:5d}{:5d}{:12.6f}{:12.6f}\n".format(rx,ry,rz,m+1,n+1,rp,ip)
-                        f.write(line)
-            f.close()
-
-    def write_tb(self,Ham_R,AA_R):
-        name=self.seedname+"_sym_tb.dat"
-        ndegen=list(np.ones((self.nRvec),dtype=int))
-        with open(name,"w") as f:
-            f.write("symmetrize wannier tb\n"
-                    +"{:12.6f}{:12.6f}{:12.6f}\n".format(self.lattice[0,0],self.lattice[0,1],self.lattice[0,2])
-                    +"{:12.6f}{:12.6f}{:12.6f}\n".format(self.lattice[1,0],self.lattice[1,1],self.lattice[1,2])
-                    +"{:12.6f}{:12.6f}{:12.6f}\n".format(self.lattice[2,0],self.lattice[2,1],self.lattice[2,2])
-                    +str(self.num_wann)+"\n"+str(self.nRvec)+"\n")
-            nl = np.int32(np.ceil(self.nRvec/15.0))
-            for l in range(nl):
-                line="    "+'    '.join([str(np.int32(i)) for i in ndegen[l*15:(l+1)*15]])
-                f.write(line+"\n")
-            whh_r = np.round(Ham_R,decimals=10)
-            waa_r = np.round(AA_R,decimals=10)
-            for ir in range(self.nRvec):
-                rx = int(self.iRvec[ir][0]);ry = int(self.iRvec[ir][1]);rz = int(self.iRvec[ir][2])
-                f.write("\n{:5d}{:5d}{:5d}\n".format(rx,ry,rz))
-                for n in range(self.num_wann):
-                    for m in range(self.num_wann):
-                        rp =whh_r[m,n,ir].real
-                        ip =whh_r[m,n,ir].imag
-                        line="{:5d}{:5d}{:17.8E}{:17.8E}\n".format(m+1,n+1,rp,ip)
-                        f.write(line)
-            for ir in range(self.nRvec):
-                rx = int(self.iRvec[ir][0]);ry = int(self.iRvec[ir][1]);rz = int(self.iRvec[ir][2])
-                f.write("\n{:5d}{:5d}{:5d}\n".format(rx,ry,rz))
-                for n in range(self.num_wann):
-                    for m in range(self.num_wann):
-                        rp =waa_r[m,n,ir].real
-                        ip =waa_r[m,n,ir].imag
-                        line="{:5d}{:5d}{:18.8E}{:18.8E}{:18.8E}{:18.8E}{:18.8E}{:18.8E}\n".format(m+1,n+1,rp[0],ip[0],rp[1],ip[1],rp[2],ip[2])
-                        f.write(line)
-            f.close()
+    def __str__(self):
+        return ";\n".join(f"{key}:  {value}" for key, value in self.__dict__.items() if key not in ["orb_position_on_atom_dic","ur","ul"])
 
 
+# TODO : move to irrep?
+class SymmetryOperation_loc(SymmetryOperation):
+
+    @cached_property
+    def rotation_cart(self):
+        return np.dot(np.dot(self._lattice_T, self.rotation), self._lattice_inv_T)
+
+    @cached_property
+    def translation_cart(self):
+        return np.dot(np.dot(self._lattice_T, self.translation), self._lattice_inv_T)
+
+    @cached_property
+    def det_cart(self):
+        return np.linalg.det(self.rotation_cart)
+
+    @cached_property
+    def det(self):
+        return np.linalg.det(self.rotation)
+
+    @cached_property
+    def _lattice_inv_T(self):
+        return np.linalg.inv(np.transpose(self.Lattice))
+
+    @cached_property
+    def _lattice_T(self):
+        return np.transpose(self.Lattice)
+
+
+def _rotate_matrix(X, L, R):
+    _ = np.tensordot(L, X, axes=((1,), (0,)))
+    _ = np.tensordot(R, _, axes=((0,), (1,)))
+    return _.swapaxes(0, 1)
+
+
+def _matrix_to_dict(mat, H_select, wann_atom_info):
+    """transforms a matrix X[m,n,iR,...] into a dictionary like
+        {(a,b): {iR: np.array(num_w_a.num_w_b,...)}}
+    """
+    result = {}
+    for a, atom_a in enumerate(wann_atom_info):
+        num_w_a = atom_a.num_wann  # number of orbitals of atom_a
+        for b, atom_b in enumerate(wann_atom_info):
+            num_w_b = atom_b.num_wann  # number of orbitals of atom_a
+            result_ab = {}
+            X = mat[H_select[a, b]]
+            X = X.reshape((num_w_a, num_w_b) + mat.shape[2:])
+            for iR in range(mat.shape[2]):
+                result_ab[iR] = X[:, :, iR]
+            if len(result_ab) > 0:
+                result[(a, b)] = result_ab
+    return result
+
+
+def _dict_to_matrix(dic, H_select, nRvec, ndimv):
+    num_wann = H_select.shape[2]
+    mat = np.zeros((num_wann, num_wann, nRvec) + (3,) * ndimv, dtype=complex)
+    for (a, b), irX in dic.items():
+        for iR, X in irX.items():
+            mat[H_select[a, b], iR] = X.reshape((-1,) + X.shape[2:])
+    return mat
+
+
+def _get_H_select(num_wann, num_wann_atom, wann_atom_info):
+    """
+    H_select is a bool matrix which can select a subspace of Hamiltonian between one atom and it's
+    equivalent atom after symmetry operation.
+
+    Parameters
+    ----------
+    num_wann: int
+        Number of wannier functions.
+    num_wann_atom: int
+        Number of atoms which contribute projections orbitals.
+    wann_atom_info: list
+        Wannier_atoms_information list.
+
+    Returns
+    -------
+    np.array(( num_wann_atom, num_wann_atom, num_wann, num_wann), dtype=bool)
+        H_select matrix.
+    """
+    H_select = np.zeros((num_wann_atom, num_wann_atom, num_wann, num_wann), dtype=bool)
+    for a, atom_a in enumerate(wann_atom_info):
+        orb_list_a = atom_a.orbital_index
+        for b, atom_b in enumerate(wann_atom_info):
+            orb_list_b = atom_b.orbital_index
+            for oa_list in orb_list_a:
+                for oia in oa_list:
+                    for ob_list in orb_list_b:
+                        for oib in ob_list:
+                            H_select[a, b, oia, oib] = True
+    return H_select
+
+
+def _get_H_select_1b(num_wann, num_wann_atom, wann_atom_info):
+    """
+    H_select is a bool matrix which can select a subspace of wavefunction corresponding to one atom.
+
+    Parameters
+    ----------
+    num_wann: int
+        Number of wannier functions.
+    num_wann_atom: int
+        Number of atoms which contribute projections orbitals.
+    wann_atom_info: list
+        Wannier_atoms_information list.
+
+    Returns
+    -------
+    np.array(( num_wann_atom, num_wann), dtype=bool)
+        H_select matrix.
+    """
+    H_select = np.zeros((num_wann_atom, num_wann), dtype=bool)
+    for a, atom_a in enumerate(wann_atom_info):
+        orb_list_a = atom_a.orbital_index
+        for oa_list in orb_list_a:
+            for oia in oa_list:
+                H_select[a, oia] = True
+    return H_select

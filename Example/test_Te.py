@@ -6,24 +6,31 @@ import tbmodels as tb
 import sys
 sys.path.append('..')
 from sym_wann import SymWann
+from _utility import read_tb, write_hr, write_tb 
 
-seedname="Te"
-spin=True
+seedname="wannier90"
 efermi=6.0
 
-        
+num_wann, nRvec, iRvec, XX_R, real_lattice = read_tb('Te')
+
 symmetrize_wann = SymWann(
-        
-        positions = np.array([[0.274, 0.274, 0.0],
+            num_wann=num_wann,
+            lattice=real_lattice,
+            positions = np.array([[0.274, 0.274, 0.0],
                     [0.726, 0.0, 0.33333333],
                    [0.0, 0.726, 0.66666667]]),
-        atom_name = ['Te','Te','Te'],
-        proj = ['Te:s','Te:p'],
-        soc=True,
-        magmom=None,
-        DFT_code='vasp',
-        seedname="Te")
-XX_R, iRvec = symmetrize_wann.symmetrize()
+            atom_name = ['Te','Te','Te'],
+            projections = ['Te:s','Te:p'],
+            soc=True,
+            magmom=None,
+            DFT_code='vasp',
+            iRvec=iRvec,
+            XX_R=XX_R,
+        )
+
+XX_R, iRvec,wc = symmetrize_wann.symmetrize()
+write_hr(num_wann, np.shape(iRvec)[0], iRvec, XX_R, real_lattice) 
+write_tb(num_wann, np.shape(iRvec)[0], iRvec, XX_R, real_lattice) 
 
 
 
@@ -49,7 +56,7 @@ for npath in range(len(kpatha)-1):
     dka=(kpatha[npath+1]-kpatha[npath])/float(nk)
     for n in range(nk):
         kpa.append(list(kpatha[npath]+n*dka) )
-model1 = tb.Model.from_wannier_files(hr_file=seedname+"_hr.dat")
+model1 = tb.Model.from_wannier_files(hr_file="Te_hr.dat")
 model2 = tb.Model.from_wannier_files(hr_file=seedname+"_sym_hr.dat")
 
 res1=np.array(model1.eigenval(kpa))
